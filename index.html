@@ -61,9 +61,16 @@
     }
     .header-row{display:flex; align-items:center; gap:10px;}
     .brand{
-      display:flex; flex-direction:column; line-height:1.1;
-      min-width:0;
+      display:flex; flex-direction:row; align-items:center; gap:10px;
+      line-height:1.1; min-width:0;
     }
+    .brand-icon{
+      width:34px; height:34px; border-radius: 12px;
+      box-shadow: var(--shadow);
+      background:#fff;
+    }
+    .brand-text{ display:flex; flex-direction:column; min-width:0; }
+
     .brand .name{
       font-weight: 800;
       letter-spacing: .2px;
@@ -359,8 +366,11 @@
     <header class="header">
       <div class="header-row">
         <div class="brand">
-          <div class="name">BasketBurst</div>
-          <div class="tag">A brighter way to shop.</div>
+          <img class="brand-icon" src="favicon.svg" alt="" aria-hidden="true">
+          <div class="brand-text">
+            <div class="name">BasketBurst</div>
+            <div class="tag">A brighter way to shop.</div>
+          </div>
         </div>
         <div id="syncPill" class="pill warn" title="Sync status">
           <span class="dot"></span>
@@ -541,10 +551,16 @@
       </button>
       <button class="tab" data-tab="meals" type="button" aria-label="Meals">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M7 4v8M10 4v8M7 8h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <path d="M14 4c2 2 2 5 0 7v9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <path d="M5 20h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
+          <!-- Fork -->
+          <path d="M6 3v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M9 3v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M7.5 3v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M6 7.5h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M7.5 11v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <!-- Knife -->
+          <path d="M14 3c2.5 2.2 2.5 6.2 0 8.4V21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M14 11.4c2.2-.2 4-2 4-4.2 0-2.1-1.8-3.9-4-4.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+</svg>
         <div class="lbl">Meals</div>
       </button>
       <button class="tab" data-tab="shop" type="button" aria-label="Shop">
@@ -937,7 +953,25 @@ const el = document.createElement("div");
       const listsQ = query(collection(db, "households", hid, "lists"), orderBy("pinned", "desc"), orderBy("updatedAt", "desc"));
       state.unsubLists = onSnapshot(listsQ, (snap)=>{
         state.lists = snap.docs.map(d=>({id:d.id, ...d.data()}));
+
+        // On refresh / household switch, ensure the stored current list id is valid for this household.
+        const curId = getCurrentListId();
+        const cur = (state.lists || []).find(l=>l.id === curId) || null;
+        const weekly = (state.lists || []).find(l=>l.type === "weekly" && !l.archived) || null;
+        const firstActive = (state.lists || []).find(l=>!l.archived) || null;
+
+        let nextId = curId;
+        if(!cur || cur.archived){
+          nextId = weekly?.id || firstActive?.id || null;
+        }
+        if(nextId !== curId){
+          if(nextId) localStorage.setItem("bb.currentListId", nextId);
+          else localStorage.removeItem("bb.currentListId");
+          setCtx();
+        }
+
         renderLists();
+        attachItemsListener();
         setSync("Sync • Up to date", "good");
       }, (err)=>{
         console.error(err);
@@ -1240,13 +1274,19 @@ scheduleWeeklyResetCheck();
             <div class="title">${escapeHtml(l.name || "List")}</div>
             <div class="sub">${l.type==="weekly" ? "Weekly" : "Custom"}${l.archived ? " • Archived" : ""}</div>
           </div>
-          <button class="iconBtn" type="button" data-list-manage aria-label="List options" title="List options">
+          
+          <div class="row" style="gap:8px; justify-content:flex-end; align-items:center">
+            <button class="btn secondary small" type="button" data-list-build>Build</button>
+            <button class="btn primary small" type="button" data-list-shop>Shop</button>
+            <button class="iconBtn" type="button" data-list-manage aria-label="List options" title="List options">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
                 <path d="M19 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
                 <path d="M5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
               </svg>
             </button>
+          </div>
+
             <div class="badge">${l.type==="weekly" ? "Weekly" : "List"}</div>
         `;
         el.addEventListener("click", ()=>{
@@ -1255,6 +1295,18 @@ scheduleWeeklyResetCheck();
           attachItemsListener();
           toast("Current list set");
         });
+        
+        el.querySelector("[data-list-build]")?.addEventListener("click", (e)=>{
+          e.stopPropagation();
+          setCurrentListId(l.id);
+          setTab("build");
+        });
+        el.querySelector("[data-list-shop]")?.addEventListener("click", (e)=>{
+          e.stopPropagation();
+          setCurrentListId(l.id);
+          setTab("shop");
+        });
+
         el.querySelector("[data-list-manage]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openListSettings(l); });
         wrap.appendChild(el);
       }
