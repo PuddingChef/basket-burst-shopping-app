@@ -323,6 +323,35 @@
     }
     .iconBtn:active{transform: scale(.96)}
     .iconBtn svg{width:18px;height:18px}
+
+    /* Forms (used heavily in modals) */
+    .field{display:flex; flex-direction:column; gap:6px; margin:10px 0}
+    .field label{font-size:12px; font-weight:900; color: var(--text2)}
+    .grid2{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+    @media (max-width: 420px){ .grid2{grid-template-columns:1fr} }
+    input, textarea{
+      width:100%;
+      border-radius: 14px;
+      border: 1px solid var(--divider);
+      padding: 12px 12px;
+      min-height: var(--tap);
+      outline: none;
+      background:#fff;
+    }
+    input:focus, textarea:focus, select:focus{
+      border-color: rgba(255,61,127,.55);
+      box-shadow: 0 0 0 4px rgba(255,61,127,.12);
+    }
+    textarea{min-height: 92px; resize: vertical}
+
+    /* Picked items */
+    .item.picked{
+      border-color: rgba(54, 214, 142, .55);
+      box-shadow: 0 0 0 6px rgba(54,214,142,.10), var(--shadow);
+      background: linear-gradient(180deg, rgba(54,214,142,.10), rgba(255,255,255,.75));
+    }
+    .item.picked .title{ color: #0b6b3a; }
+    .item.picked .sub{ color: rgba(11,107,58,.80); }
 </style>
 </head>
 <body>
@@ -362,6 +391,7 @@
           <div class="sep"></div>
           <div class="row wrap">
             <button class="btn primary" id="btnNewList" type="button">New list</button>
+            <button class="btn secondary" id="btnToggleArchivedLists" type="button">Show archived</button>
             <button class="btn ghost" id="btnOpenWeekly" type="button">Open Weekly shop</button>
           </div>
         </div>
@@ -371,9 +401,31 @@
       <section id="panel-build" class="panel">
         <div class="card">
           <div class="h1">Build</div>
-          <div class="muted">Quick-add items, and keep your weekly template tidy.</div>
+          <div class="muted">Add items to your current list. Weekly template lives in Account → Setup.</div>
           <div class="sep"></div>
-          <div class="muted">Coming next: quick add + categories + template editor.</div>
+
+          <div id="buildEmpty" class="muted">Select a household and a list to start building.</div>
+
+          <div id="buildWrap" style="display:none">
+            <div class="row" style="align-items:flex-end">
+              <div class="grow">
+                <div class="h1" style="font-size:16px; margin:0">Current list</div>
+                <div id="buildCurrentList" class="muted" style="margin-top:6px">—</div>
+              </div>
+              <button class="btn primary" id="btnAddItem" type="button">Add item</button>
+            </div>
+
+            <div class="sep"></div>
+
+            <div class="row wrap" style="justify-content:space-between">
+              <div class="muted">Items</div>
+              <button class="btn ghost" id="btnTogglePicked" type="button">Show picked</button>
+            </div>
+            <div class="sep"></div>
+
+            <div id="itemsEmpty" class="muted">No items yet. Add your first item.</div>
+            <div id="itemsWrap" class="list" style="display:none"></div>
+          </div>
         </div>
       </section>
 
@@ -437,7 +489,34 @@
 
 <div class="sep"></div>
             <div class="h1" style="font-size:15px">Setup</div>
-            <div class="muted">Categories and weekly template will live here (next).</div>
+            <div class="muted">Set up your shop journey (categories) and Weekly Shop template.</div>
+            <div class="sep"></div>
+
+            <div id="setupBlock" class="muted">Select a household to manage setup.</div>
+
+            <div id="setupWrap" style="display:none">
+              <div class="h1" style="font-size:15px">Categories</div>
+              <div class="muted">Controls the order you’ll see items in Shopping Mode.</div>
+              <div class="sep"></div>
+              <div id="catsWrap" class="list"></div>
+              <div class="sep"></div>
+              <div class="row wrap">
+                <button class="btn secondary" id="btnAddCategory" type="button">Add category</button>
+              </div>
+
+              <div class="sep"></div>
+              <div class="h1" style="font-size:15px">Weekly template</div>
+              <div class="muted">These items come back every week when you reset.</div>
+              <div class="sep"></div>
+              <div id="tplEmpty" class="muted">No template items yet. Add your regulars (e.g., milk, bread).</div>
+              <div id="tplWrap" class="list" style="display:none"></div>
+              <div class="sep"></div>
+              <div class="row wrap">
+                <button class="btn primary" id="btnAddTplItem" type="button">Add template item</button>
+                <button class="btn warn" id="btnResetWeeklyNow" type="button">Reset Weekly Shop</button>
+                <button class="btn secondary" id="btnTestWeeklyPrompt" type="button">Test Monday reset prompt</button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -513,7 +592,7 @@
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import {
       getFirestore, doc, getDoc, setDoc, addDoc, collection, serverTimestamp,
-      onSnapshot, query, orderBy, where, limit, writeBatch, updateDoc, deleteDoc
+      onSnapshot, query, orderBy, where, limit, getDocs, writeBatch, updateDoc, deleteDoc
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
     // === Firebase config (provided by Rich) ===
@@ -567,6 +646,8 @@
 
     // Modal
     function showModal({title, body, footerButtons=[]}){
+      // Accessibility: remember focus so we can restore it when the modal closes
+      state.lastFocusEl = document.activeElement;
       $("#modalTitle").textContent = title || " ";
       const bodyEl = $("#modalBody");
       bodyEl.innerHTML = "";
@@ -597,12 +678,42 @@
       $("#modalBackdrop").setAttribute("aria-hidden","false");
     }
     function hideModal(){
-      $("#modalBackdrop").classList.remove("show");
-      $("#modalBackdrop").setAttribute("aria-hidden","true");
-          stopHouseholdSettingsListeners();
+      // Accessibility: move focus out of the modal before hiding it
+      const root = $("#modalBackdrop");
+      const active = document.activeElement;
+      if(root && active && root.contains(active)){
+        try{ active.blur(); }catch{}
+      }
+
+      root.classList.remove("show");
+      root.setAttribute("aria-hidden","true");
+
+      try{ stopHouseholdSettingsListeners?.(); }catch{}
+
+      // Restore focus to what was focused before opening the modal (if still in DOM)
+      const prev = state.lastFocusEl;
+      state.lastFocusEl = null;
+      if(prev && document.contains(prev)){
+        setTimeout(()=>{ try{ prev.focus(); }catch{} }, 0);
+      }
     }
 
-    $("#modalClose").addEventListener("click", hideModal);
+    async function confirmModal({title="Confirm", message="", confirmLabel="OK", cancelLabel="Cancel", confirmClass="primary", cancelClass="ghost"}={}){
+      return new Promise((resolve)=>{
+        let done = false;
+        const safeResolve = (v)=>{ if(done) return; done = true; resolve(v); };
+        showModal({
+          title,
+          body: `<div class="muted">${escapeHtml(String(message || ""))}</div>`,
+          footerButtons: [
+            { label: cancelLabel, className: "btn " + cancelClass, onClick: ()=> safeResolve(false) },
+            { label: confirmLabel, className: "btn " + confirmClass, onClick: ()=> safeResolve(true) }
+          ]
+        });
+      });
+    }
+
+    $("#modalClose").addEventListener("click", hideModal);$("#modalClose").addEventListener("click", hideModal);
     $("#modalBackdrop").addEventListener("click", (e)=>{ if(e.target.id==="modalBackdrop") hideModal(); });
 
     // Tabs
@@ -610,6 +721,7 @@
       $$(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
       $$(".panel").forEach(p=>p.classList.remove("active"));
       $("#panel-"+name).classList.add("active");
+      if(name==="build") renderBuild();
     }
     $$(".tab").forEach(t=> t.addEventListener("click", ()=> setTab(t.dataset.tab)));
 
@@ -624,6 +736,16 @@
       unsubHouseholdDoc: null,
       unsubLists: null,
       lists: []
+   ,
+      categories: [],
+      config: null,
+      unsubCategories: null,
+      unsubConfig: null,
+      unsubItems: null,
+      items: [],
+      showPicked: false,
+      lastFocusEl: null,
+      showArchivedLists: (localStorage.getItem("bb.showArchivedLists")==="1")
     };
 
     function setCtx(){
@@ -639,6 +761,8 @@
       if(id) localStorage.setItem("bb.currentListId", id);
       else localStorage.removeItem("bb.currentListId");
       setCtx();
+      try{ renderLists(); }catch{}
+      try{ attachItemsListener(); }catch{}
     }
 
     // === Auth UI ===
@@ -820,12 +944,262 @@ const el = document.createElement("div");
         setSync("Sync • Permission blocked", "bad");
         $("#listsEmpty").textContent = "Couldn’t load lists (permissions).";
       });
+
+// Listen to categories (ordered)
+const catsQ = query(collection(db, "households", hid, "categories"), orderBy("order", "asc"));
+state.unsubCategories = onSnapshot(catsQ, (snap)=>{
+  state.categories = snap.docs
+    .map(d=>({id:d.id, ...d.data()}))
+    .filter(c=>!c.archived);
+  renderSetup();
+}, (err)=>{
+  console.error(err);
+  // Categories are non-blocking for list viewing; show a toast only once per session if needed
+});
+
+// Listen to household config (template etc.)
+state.unsubConfig = onSnapshot(doc(db, "households", hid, "settings", "config"), (snap)=>{
+  state.config = snap.exists() ? snap.data() : null;
+  renderSetup();
+}, (err)=>{
+  console.error(err);
+});
+
+// Weekly reset check (Monday morning) after initial data is available
+scheduleWeeklyResetCheck();
     }
 
     function cleanupHouseholdSubs(){
-      if(state.unsubLists){ try{state.unsubLists()}catch{} state.unsubLists=null; }
+  if(state.unsubLists){ try{state.unsubLists()}catch{} state.unsubLists=null; }
+  if(state.unsubCategories){ try{state.unsubCategories()}catch{} state.unsubCategories=null; }
+  if(state.unsubConfig){ try{state.unsubConfig()}catch{} state.unsubConfig=null; }
+  state.categories = [];
+  state.config = null;
+  cleanupItemsSub();
+}
+
+
+    function cleanupItemsSub(){
+      if(state.unsubItems){ try{state.unsubItems()}catch{} state.unsubItems=null; }
+      state.items = [];
     }
 
+    function getCurrentList(){
+      const id = getCurrentListId();
+      return (state.lists || []).find(l=>l.id===id) || null;
+    }
+
+    function attachItemsListener(){
+      cleanupItemsSub();
+      if(!state.selectedHouseholdId) { renderBuild(); return; }
+      const cur = getCurrentList();
+      if(!cur){ renderBuild(); return; }
+
+      const itemsCol = collection(db, "households", state.selectedHouseholdId, "lists", cur.id, "items");
+      const qy = query(itemsCol, orderBy("createdAt", "asc"));
+      state.unsubItems = onSnapshot(qy, (snap)=>{
+        state.items = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+        renderBuild();
+      }, (err)=>{
+        console.error(err);
+        toast("Couldn’t load items (permissions)", {ms:3200});
+        state.items = [];
+        renderBuild();
+      });
+    }
+
+    function categoryLabel(id){
+      if(!id) return "Uncategorised";
+      const c = (state.categories || []).find(x=>x.id===id);
+      return c ? c.name : "Uncategorised";
+    }
+
+    function fmtQty(it){
+      const q = it.qty;
+      const u = (it.unit || "").trim();
+      if(q===null || q===undefined || q==="" || Number.isNaN(Number(q))) return u ? u : "";
+      const qn = Number(q);
+      if(!u) return String(qn);
+      return `${qn} ${u}`;
+    }
+
+    function renderBuild(){
+      const empty = $("#buildEmpty");
+      const wrap = $("#buildWrap");
+      const curEl = $("#buildCurrentList");
+      const itemsEmpty = $("#itemsEmpty");
+      const itemsWrap = $("#itemsWrap");
+      const togglePickedBtn = $("#btnTogglePicked");
+
+      if(!state.user || !state.selectedHouseholdId){
+        empty.style.display = "block";
+        wrap.style.display = "none";
+        return;
+      }
+
+      const cur = getCurrentList();
+      if(!cur){
+        empty.style.display = "block";
+        empty.textContent = "Select a list in the Lists tab to start building.";
+        wrap.style.display = "none";
+        return;
+      }
+
+      empty.style.display = "none";
+      wrap.style.display = "block";
+      curEl.textContent = cur.name || (cur.type==="weekly" ? "Weekly shop" : "List");
+
+      if(togglePickedBtn){
+        togglePickedBtn.textContent = state.showPicked ? "Hide picked" : "Show picked";
+      }
+
+      const visible = (state.items || []).filter(it=> state.showPicked ? true : !it.picked);
+      itemsWrap.innerHTML = "";
+
+      if(!visible.length){
+        itemsEmpty.style.display = "block";
+        itemsWrap.style.display = "none";
+        itemsEmpty.textContent = state.showPicked ? "No items yet." : "No unpicked items — toggle to show picked, or add more.";
+        return;
+      }
+
+      itemsEmpty.style.display = "none";
+      itemsWrap.style.display = "flex";
+
+      // Group by category, uncategorised last
+      const groups = new Map();
+      for(const it of visible){
+        const key = it.categoryId || "__uncat__";
+        if(!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(it);
+      }
+      const order = (state.categories || []).map(c=>c.id).filter(id=>groups.has(id));
+      if(groups.has("__uncat__")) order.push("__uncat__");
+
+      for(const catId of order){
+        const header = document.createElement("div");
+        header.className = "muted";
+        header.style.margin = "10px 2px 6px";
+        header.style.fontWeight = "800";
+        header.textContent = catId==="__uncat__" ? "Uncategorised" : categoryLabel(catId);
+        itemsWrap.appendChild(header);
+
+        for(const it of groups.get(catId)){
+          const row = document.createElement("div");
+          row.className = "item" + (it.picked ? " picked" : "");
+          const qtyTxt = fmtQty(it);
+          row.innerHTML = `
+            <div class="grow">
+              <div class="title">${escapeHtml(it.name || "Item")}</div>
+              <div class="sub">${qtyTxt ? escapeHtml(qtyTxt) + " • " : ""}${escapeHtml(categoryLabel(it.categoryId))}${it.notes ? " • " + escapeHtml(it.notes) : ""}${it.picked ? " • Picked" : ""}</div>
+            </div>
+            <button class="btn secondary small" type="button" data-toggle>${it.picked ? "Unpick" : "Pick"}</button>
+            <button class="btn danger small" type="button" data-del>×</button>
+          `;
+
+          row.querySelector("[data-toggle]")?.addEventListener("click", async (e)=>{
+            e.stopPropagation();
+            const cur = getCurrentList();
+            if(!cur) return;
+            setSync("Sync • Saving…", "warn");
+            await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", cur.id, "items", it.id), {
+              picked: !it.picked,
+              pickedAt: !it.picked ? serverTimestamp() : null,
+              updatedAt: serverTimestamp(),
+              updatedByUid: state.user.uid
+            });
+            setSync("Sync • Up to date", "good");
+          });
+
+          row.querySelector("[data-del]")?.addEventListener("click", async (e)=>{
+            e.stopPropagation();
+            const ok = await confirmModal({
+              title: "Delete item?",
+              message: "This permanently deletes the item from the list.",
+              confirmLabel: "Delete",
+              confirmClass: "danger",
+              cancelLabel: "Cancel"
+            });
+            if(!ok) return;
+            const cur = getCurrentList();
+            if(!cur) return;
+            setSync("Sync • Deleting…", "warn");
+            await deleteDoc(doc(db, "households", state.selectedHouseholdId, "lists", cur.id, "items", it.id));
+            setSync("Sync • Up to date", "good");
+          });
+
+          itemsWrap.appendChild(row);
+        }
+      }
+    }
+
+    async function openAddItemModal(){
+      const cur = getCurrentList();
+      if(!cur){ toast("Select a list first"); setTab("lists"); return; }
+
+      const catOptions = (state.categories || []).map(c=> `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
+      showModal({
+        title: "Add item",
+        body: `
+          <div class="grid2">
+            <div class="field">
+              <label>Item name</label>
+              <input id="aiName" placeholder="e.g. Milk" />
+            </div>
+            <div class="field">
+              <label>Category</label>
+              <select id="aiCat">
+                <option value="">Uncategorised</option>
+                ${catOptions}
+              </select>
+            </div>
+            <div class="field">
+              <label>Quantity</label>
+              <input id="aiQty" type="number" inputmode="decimal" placeholder="e.g. 2" />
+            </div>
+            <div class="field">
+              <label>Unit</label>
+              <input id="aiUnit" placeholder="e.g. bottles" />
+            </div>
+            <div class="field" style="grid-column:1 / -1">
+              <label>Notes (optional)</label>
+              <textarea id="aiNotes" placeholder="e.g. Semi-skimmed"></textarea>
+            </div>
+          </div>
+        `,
+        footerButtons: [
+          { label:"Cancel", className:"btn ghost" },
+          { label:"Add", className:"btn primary", onClick: async ()=>{
+              const name = ($("#aiName").value || "").trim();
+              if(!name){ toast("Please enter an item name"); return false; }
+              const categoryId = ($("#aiCat").value || "") || null;
+              const qtyRaw = ($("#aiQty").value || "").trim();
+              const qty = qtyRaw ? Number(qtyRaw) : null;
+              const unit = ($("#aiUnit").value || "").trim();
+              const notes = ($("#aiNotes").value || "").trim();
+
+              setSync("Sync • Adding…", "warn");
+              const itemsCol = collection(db, "households", state.selectedHouseholdId, "lists", cur.id, "items");
+              await addDoc(itemsCol, {
+                name,
+                categoryId,
+                qty: (qtyRaw && !Number.isNaN(qty)) ? qty : null,
+                unit,
+                notes,
+                picked: false,
+                pickedAt: null,
+                priceEach: null,
+                costTotal: null,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                addedByUid: state.user.uid,
+                updatedByUid: state.user.uid
+              });
+              setSync("Sync • Up to date", "good");
+            }}
+        ]
+      });
+    }
     // === Lists UI (baseline) ===
     function renderLists(){
       const wrap = $("#listsWrap");
@@ -853,26 +1227,307 @@ const el = document.createElement("div");
 
       const currentId = getCurrentListId();
 
-      for(const l of state.lists){
-        const el = document.createElement("div");
-        el.className = "item";
+      const showArchived = !!state.showArchivedLists;
+      $("#btnToggleArchivedLists").textContent = showArchived ? "Hide archived" : "Show archived";
+      const visible = state.lists.filter(l=> showArchived ? true : !l.archived);
+
+      for(const l of visible){
         const isCurrent = l.id === currentId;
+        const el = document.createElement("div");
+        el.className = "item hhRow" + (isCurrent ? " selected" : "");
         el.innerHTML = `
           <div class="grow">
-            <div class="title">${escapeHtml(l.name || "List")}${isCurrent ? " • Current" : ""}</div>
+            <div class="title">${escapeHtml(l.name || "List")}</div>
             <div class="sub">${l.type==="weekly" ? "Weekly" : "Custom"}${l.archived ? " • Archived" : ""}</div>
           </div>
-          <div class="badge">${l.type==="weekly" ? "Weekly" : "List"}</div>
+          <button class="iconBtn" type="button" data-list-manage aria-label="List options" title="List options">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+                <path d="M19 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+                <path d="M5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+              </svg>
+            </button>
+            <div class="badge">${l.type==="weekly" ? "Weekly" : "List"}</div>
         `;
         el.addEventListener("click", ()=>{
           setCurrentListId(l.id);
+          renderLists();
+          attachItemsListener();
           toast("Current list set");
         });
+        el.querySelector("[data-list-manage]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openListSettings(l); });
         wrap.appendChild(el);
       }
 
       setCtx();
     }
+
+function renderSetup(){
+  const block = $("#setupBlock");
+  const wrap = $("#setupWrap");
+  if(!block || !wrap) return;
+
+  if(!state.selectedHouseholdId){
+    block.style.display = "block";
+    wrap.style.display = "none";
+    block.textContent = "Select a household to manage setup.";
+    return;
+  }
+
+  block.style.display = "none";
+  wrap.style.display = "block";
+
+  // Categories list
+  const catsWrap = $("#catsWrap");
+  catsWrap.innerHTML = "";
+  const cats = (state.categories || []).slice();
+
+  // Ensure Uncategorised is last (system)
+  cats.sort((a,b)=> (a.name==="Uncategorised") - (b.name==="Uncategorised") || (a.order||0)-(b.order||0));
+
+  cats.forEach((c, idx)=>{
+    const isSystem = c.name === "Uncategorised";
+    const row = document.createElement("div");
+    row.className = "item";
+    row.innerHTML = `
+      <div class="grow">
+        <div class="title">${escapeHtml(c.name || "Category")}${isSystem ? " • System" : ""}</div>
+        <div class="sub">Order: ${idx+1}</div>
+      </div>
+      ${!isSystem ? `
+        <button class="btn secondary small" type="button" data-up>Up</button>
+        <button class="btn secondary small" type="button" data-down>Down</button>
+            ${state.selectedRole==="owner" && c.id!=="uncategorised" ? `<button class="btn danger small" type="button" data-delcat>Delete</button>` : ``}
+      ` : ``}
+    `;
+    row.querySelector("[data-up]")?.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      await moveCategory(c.id, -1);
+    });
+    row.querySelector("[data-down]")?.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      await moveCategory(c.id, +1);
+    });
+    row.querySelector("[data-delcat]")?.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      await deleteCategory(c.id);
+    });
+    catsWrap.appendChild(row);
+  });
+
+  // Template list
+  const tpl = Array.isArray(state.config?.weeklyTemplate) ? state.config.weeklyTemplate : [];
+  const tplWrap = $("#tplWrap");
+  const tplEmpty = $("#tplEmpty");
+  tplWrap.innerHTML = "";
+
+  if(!tpl.length){
+    tplEmpty.style.display = "block";
+    tplWrap.style.display = "none";
+  }else{
+    tplEmpty.style.display = "none";
+    tplWrap.style.display = "flex";
+
+    for(const t of tpl){
+      const row = document.createElement("div");
+      row.className = "item";
+      const catName = (state.categories || []).find(c=>c.id===t.categoryId)?.name || "Uncategorised";
+      row.innerHTML = `
+        <div class="grow">
+          <div class="title">${escapeHtml(t.name || "Item")}</div>
+          <div class="sub">${escapeHtml(catName)}${t.qty ? " • " + escapeHtml(String(t.qty)) + (t.unit ? " " + escapeHtml(t.unit) : "") : ""}${t.notes ? " • " + escapeHtml(t.notes) : ""}</div>
+        </div>
+        <button class="btn secondary small" type="button" data-edit>Edit</button>
+        <button class="btn danger small" type="button" data-del>×</button>
+      `;
+      row.querySelector("[data-edit]")?.addEventListener("click", ()=> openTemplateItemModal(t));
+      row.querySelector("[data-del]")?.addEventListener("click", ()=> deleteTemplateItem(t.id));
+      tplWrap.appendChild(row);
+    }
+  }
+}
+
+
+async function deleteCategory(catId){
+  if(!guardHousehold()) return;
+  if(state.selectedRole !== "owner"){
+    toast("Only the household owner can delete categories");
+    return;
+  }
+  if(catId === "uncategorised"){
+    toast("Uncategorised can’t be deleted");
+    return;
+  }
+
+  const cat = (state.categories || []).find(c=>c.id===catId);
+  const ok = await confirmModal({
+    title: "Delete category?",
+    message: `This will remove "${(cat?.name || "Category")}" and any template items using it will become Uncategorised.`,
+    confirmLabel: "Delete",
+    confirmClass: "danger",
+    cancelLabel: "Cancel"
+  });
+  if(!ok) return;
+
+  setSync("Sync • Deleting category…", "warn");
+
+  await deleteDoc(doc(db, "households", state.selectedHouseholdId, "categories", catId));
+
+  const t = Array.isArray(state.config?.weeklyTemplate) ? state.config.weeklyTemplate : [];
+  const t2 = t.map(it => (it.categoryId === catId ? { ...it, categoryId: null } : it));
+
+  // Re-number remaining categories (ensure uncategorised last)
+  const remaining = (state.categories || []).filter(c=>c.id !== catId);
+  const sorted = [...remaining].sort((a,b)=> (a.order ?? 9999) - (b.order ?? 9999));
+  const uncat = sorted.find(c=>c.id==="uncategorised");
+  const others = sorted.filter(c=>c.id!=="uncategorised");
+  const final = [...others, ...(uncat ? [uncat] : [])];
+
+  const batch = writeBatch(db);
+  final.forEach((c, i)=>{
+    batch.update(doc(db, "households", state.selectedHouseholdId, "categories", c.id), { order: i });
+  });
+  batch.set(doc(db, "households", state.selectedHouseholdId, "config", "current"), { weeklyTemplate: t2 }, { merge:true });
+  await batch.commit();
+
+  toast("Category deleted");
+  setSync("Sync • Up to date", "good");
+}
+
+async function moveCategory(categoryId, delta){
+  if(!guardHousehold()) return;
+  const cats = (state.categories || []).slice().filter(c=>c.name!=="Uncategorised");
+  cats.sort((a,b)=> (a.order||0)-(b.order||0));
+  const idx = cats.findIndex(c=>c.id===categoryId);
+  if(idx < 0) return;
+  const j = idx + delta;
+  if(j < 0 || j >= cats.length) return;
+
+  const a = cats[idx], b = cats[j];
+  setSync("Sync • Updating categories…", "warn");
+  const batch = writeBatch(db);
+  batch.update(doc(db, "households", state.selectedHouseholdId, "categories", a.id), { order: b.order ?? j, });
+  batch.update(doc(db, "households", state.selectedHouseholdId, "categories", b.id), { order: a.order ?? idx, });
+  await batch.commit();
+  toast("Category order updated");
+}
+
+async function addCategory(){
+  if(!guardHousehold()) return;
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <div class="muted" style="margin-bottom:10px">Add a new category for your shop journey.</div>
+    <label class="muted" for="catName">Category name</label>
+    <input id="catName" class="input" placeholder="e.g. Deli" />
+  `;
+  showModal({
+    title:"Add category",
+    body,
+    footerButtons:[
+      {label:"Cancel", className:"btn ghost"},
+      {label:"Add", className:"btn primary", onClick: async ()=>{
+        const name = ($("#catName")?.value || "").trim();
+        if(!name){ toast("Enter a category name"); return false; }
+        const maxOrder = Math.max(-1, ...(state.categories||[]).filter(c=>c.name!=="Uncategorised").map(c=>Number(c.order||0)));
+        setSync("Sync • Adding category…", "warn");
+        await setDoc(doc(db, "households", state.selectedHouseholdId, "categories", crypto.randomUUID()), {
+          name,
+          order: maxOrder + 1,
+          archived:false,
+          createdAt: serverTimestamp(),
+          createdByUid: state.user.uid
+        });
+        toast("Category added");
+      }}
+    ]
+  });
+  setTimeout(()=> $("#catName")?.focus(), 50);
+}
+
+async function saveWeeklyTemplate(next){
+  if(!guardHousehold()) return;
+  setSync("Sync • Saving template…", "warn");
+  await setDoc(doc(db, "households", state.selectedHouseholdId, "settings", "config"), {
+    weeklyTemplate: next,
+    updatedAt: serverTimestamp(),
+    updatedByUid: state.user.uid
+  }, { merge:true });
+  toast("Template saved");
+}
+
+function openTemplateItemModal(item){
+  const isEdit = !!item;
+  const t = item || { id: crypto.randomUUID(), name:"", categoryId:null, qty:null, unit:"", notes:"" };
+  const cats = (state.categories || []).slice();
+  // Ensure Uncategorised option last
+  cats.sort((a,b)=> (a.name==="Uncategorised") - (b.name==="Uncategorised") || (a.order||0)-(b.order||0));
+
+  const options = cats.map(c=> `<option value="${escapeHtml(c.id)}" ${c.id===t.categoryId ? "selected":""}>${escapeHtml(c.name)}</option>`).join("");
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <label class="muted" for="tiName">Item</label>
+    <input id="tiName" class="input" value="${escapeHtml(t.name)}" placeholder="e.g. Milk" />
+    <div class="sep"></div>
+    <label class="muted" for="tiCat">Category</label>
+    <select id="tiCat" class="input">
+      <option value="">Uncategorised</option>
+      ${options}
+    </select>
+    <div class="sep"></div>
+    <div class="row">
+      <div class="grow">
+        <label class="muted" for="tiQty">Qty</label>
+        <input id="tiQty" class="input" inputmode="decimal" placeholder="e.g. 1" value="${t.qty ?? ""}" />
+      </div>
+      <div class="grow">
+        <label class="muted" for="tiUnit">Unit</label>
+        <input id="tiUnit" class="input" placeholder="pcs, L, kg…" value="${escapeHtml(t.unit || "")}" />
+      </div>
+    </div>
+    <div class="sep"></div>
+    <label class="muted" for="tiNotes">Notes</label>
+    <input id="tiNotes" class="input" placeholder="Brand, size, alternatives…" value="${escapeHtml(t.notes || "")}" />
+  `;
+
+  showModal({
+    title: isEdit ? "Edit template item" : "Add template item",
+    body,
+    footerButtons:[
+      {label:"Cancel", className:"btn ghost"},
+      {label: isEdit ? "Save" : "Add", className:"btn primary", onClick: async ()=>{
+        const name = ($("#tiName")?.value || "").trim();
+        if(!name){ toast("Enter an item name"); return false; }
+        const catId = ($("#tiCat")?.value || "").trim() || null;
+        const qtyRaw = ($("#tiQty")?.value || "").trim();
+        const qty = qtyRaw ? Number(qtyRaw) : null;
+        const unit = ($("#tiUnit")?.value || "").trim();
+        const notes = ($("#tiNotes")?.value || "").trim();
+
+        const current = Array.isArray(state.config?.weeklyTemplate) ? state.config.weeklyTemplate : [];
+        const next = current.slice();
+        const idx = next.findIndex(x=>x.id===t.id);
+        const entry = { id: t.id, name, categoryId: catId, qty, unit, notes };
+        if(idx >= 0) next[idx] = entry; else next.push(entry);
+        await saveWeeklyTemplate(next);
+      }}
+    ]
+  });
+  setTimeout(()=> $("#tiName")?.focus(), 50);
+}
+
+async function deleteTemplateItem(id){
+  const ok = await confirmModal({
+    title:"Remove template item?",
+    message:"This removes it from your Weekly template (it won’t be re-added on reset).",
+    confirmLabel:"Remove",
+    confirmClass:"danger"
+  });
+  if(!ok) return;
+  const current = Array.isArray(state.config?.weeklyTemplate) ? state.config.weeklyTemplate : [];
+  const next = current.filter(x=>x.id!==id);
+  await saveWeeklyTemplate(next);
+}
+
 
     async function ensureWeeklyList(hid){
       // Find existing weekly list
@@ -882,6 +1537,7 @@ const el = document.createElement("div");
       setSync("Sync • Creating Weekly shop…", "warn");
       const ref = await addDoc(collection(db, "households", hid, "lists"), {
         name: "Weekly shop",
+        weekKey: isoWeekKey(new Date()),
         type: "weekly",
         pinned: true,
         archived: false,
@@ -938,6 +1594,239 @@ const el = document.createElement("div");
       setTimeout(()=> $("#newListName")?.focus(), 50);
     });
 
+    // Build tab
+    $("#btnAddItem")?.addEventListener("click", async ()=>{
+      if(!guardHousehold()) return;
+      await openAddItemModal();
+    });
+
+    $("#btnTogglePicked")?.addEventListener("click", ()=>{
+      state.showPicked = !state.showPicked;
+      renderBuild();
+    });
+
+
+
+$("#btnToggleArchivedLists")?.addEventListener("click", ()=>{
+  state.showArchivedLists = !state.showArchivedLists;
+  localStorage.setItem("bb.showArchivedLists", state.showArchivedLists ? "1" : "0");
+  renderLists();
+});
+
+function openListSettings(list){
+  const isWeekly = list.type === "weekly";
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <div class="muted" style="margin-bottom:10px">Manage this list.</div>
+    <label class="muted" for="lsName">List name</label>
+    <input id="lsName" class="input" value="${escapeHtml(list.name || "List")}" />
+    <div class="sep"></div>
+    <div class="row wrap">
+      ${!isWeekly ? `<button class="btn ${list.archived ? "secondary" : "warn"}" id="lsArchive" type="button">${list.archived ? "Unarchive" : "Archive"}</button>
+      <button class="btn danger" id="lsDelete" type="button">Delete</button>` : ``}
+      <button class="btn secondary" id="lsSetCurrent" type="button">Set as current</button>
+    </div>
+    <div class="sep"></div>
+    <div class="muted">Weekly Shop can’t be archived or deleted. Archiving hides a list without deleting it.</div>
+  `;
+  showModal({
+    title: "List options",
+    body,
+    footerButtons: [
+      { label:"Close", className:"btn ghost" },
+      { label:"Save", className:"btn primary", onClick: async ()=>{
+          if(!guardHousehold()) return false;
+          const name = ($("#lsName")?.value || "").trim() || (isWeekly ? "Weekly shop" : "List");
+          setSync("Sync • Saving…", "warn");
+          await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", list.id), {
+            name,
+            updatedAt: serverTimestamp(),
+            updatedByUid: state.user.uid
+          });
+          toast("Saved");
+        }
+      }
+    ]
+  });
+
+  $("#lsSetCurrent")?.addEventListener("click", ()=>{
+    setCurrentListId(list.id);
+    renderLists();
+    toast("Current list set");
+    hideModal();
+  });
+
+  $("#lsArchive")?.addEventListener("click", async ()=>{
+    if(!guardHousehold()) return;
+    const to = !list.archived;
+    setSync("Sync • Updating…", "warn");
+    await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", list.id), {
+      archived: to,
+      updatedAt: serverTimestamp(),
+      updatedByUid: state.user.uid
+    });
+    toast(to ? "Archived" : "Unarchived");
+    hideModal();
+    renderLists();
+  });
+
+
+  $("#lsDelete")?.addEventListener("click", async ()=>{
+    if(!guardHousehold()) return;
+    const ok = await confirmModal({
+      title: "Delete list?",
+      message: "This permanently deletes the list. (Any sub-items stored under it may remain until we add cascading delete.)",
+      confirmLabel: "Delete",
+      confirmClass: "danger",
+      cancelLabel: "Cancel"
+    });
+    if(!ok) return;
+
+    setSync("Sync • Deleting…", "warn");
+    await deleteDoc(doc(db, "households", state.selectedHouseholdId, "lists", list.id));
+
+    // If it was current, fall back to Weekly (if available)
+    if(getCurrentListId() === list.id){
+      const weekly = (state.lists || []).find(l=>l.type==="weekly" && !l.archived) || null;
+      setCurrentListId(weekly?.id || null);
+    }
+    toast("List deleted");
+    hideModal();
+    renderLists();
+  });
+
+}
+
+// === ISO week helpers + Weekly reset flow ===
+function isoWeekKey(d){
+  // Returns YYYY-Www (ISO week date)
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  const yyyy = date.getUTCFullYear();
+  const ww = String(weekNo).padStart(2, "0");
+  return `${yyyy}-W${ww}`;
+}
+function localDateKey(d){
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+function isMondayMorning(d){
+  // “Monday morning” for MVP: Monday and between 05:00 and 12:00 local device time
+  const dow = d.getDay(); // 1 = Monday
+  const h = d.getHours();
+  return dow === 1 && h >= 5 && h < 12;
+}
+
+async function scheduleWeeklyResetCheck(){
+  // defer a little so listeners have populated state.lists/state.config
+  setTimeout(()=> weeklyResetCheck().catch(()=>{}), 400);
+}
+
+async function weeklyResetCheck(opts={}){
+  if(!state.user || !state.selectedHouseholdId) return;
+  const now = new Date();
+  const force = !!opts.force;
+  if(!force && !isMondayMorning(now)) return;
+
+  const today = localDateKey(now);
+  if(!force && localStorage.getItem("bb.weeklyResetPromptDate") === today) return;
+
+  const weekly = (state.lists || []).find(l=>l.type==="weekly" && !l.archived) || null;
+  if(!weekly) return;
+
+  const currentKey = isoWeekKey(now);
+  const storedKey = weekly.weekKey || null;
+
+  // First time we see it, just initialise weekKey (no prompt)
+  if(!storedKey && !force){
+    await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", weekly.id), {
+      weekKey: currentKey,
+      updatedAt: serverTimestamp(),
+      updatedByUid: state.user.uid
+    });
+    return;
+  }
+  if(!force && storedKey === currentKey) return;
+
+  if(!force) localStorage.setItem("bb.weeklyResetPromptDate", today);
+
+  const okReset = await confirmModal({
+    title: "New week, new shop?",
+    message: "It’s a new week. Do you want to reset Weekly Shop back to your template, or carry the current list forward?",
+    confirmLabel: "Reset to template",
+    confirmClass: "warn",
+    cancelLabel: "Carry forward"
+  });
+
+  if(okReset){
+    await resetWeeklyShopToTemplate(state.selectedHouseholdId, weekly.id, currentKey);
+    toast("Weekly Shop reset");
+  }else{
+    await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", weekly.id), {
+      weekKey: currentKey,
+      updatedAt: serverTimestamp(),
+      updatedByUid: state.user.uid
+    });
+    toast("Carried forward");
+  }
+}
+
+async function resetWeeklyShopToTemplate(hid, weeklyListId, weekKey){
+  if(!state.user) return;
+  setSync("Sync • Resetting Weekly Shop…", "warn");
+
+  // Load latest template
+  const cfgSnap = await getDoc(doc(db, "households", hid, "settings", "config"));
+  const cfg = cfgSnap.exists() ? cfgSnap.data() : {};
+  const tpl = Array.isArray(cfg.weeklyTemplate) ? cfg.weeklyTemplate : [];
+
+  // Delete all current items (batch in chunks)
+  const itemsCol = collection(db, "households", hid, "lists", weeklyListId, "items");
+  let qy = query(itemsCol, limit(200));
+  while(true){
+    const snap = await getDocs(qy);
+    if(snap.empty) break;
+    const batch = writeBatch(db);
+    snap.docs.forEach(d=> batch.delete(d.ref));
+    await batch.commit();
+    if(snap.size < 200) break;
+  }
+
+  // Recreate from template (unchecked)
+  for(const t of tpl){
+    const name = (t.name || "").trim();
+    if(!name) continue;
+    await addDoc(itemsCol, {
+      name,
+      categoryId: t.categoryId || null,
+      qty: typeof t.qty === "number" ? t.qty : (t.qty ? Number(t.qty) : null),
+      unit: t.unit || "",
+      notes: t.notes || "",
+      picked: false,
+      pickedAt: null,
+      priceEach: null,
+      costTotal: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      addedByUid: state.user.uid,
+      updatedByUid: state.user.uid
+    });
+  }
+
+  await updateDoc(doc(db, "households", hid, "lists", weeklyListId), {
+    weekKey,
+    updatedAt: serverTimestamp(),
+    updatedByUid: state.user.uid
+  });
+
+  setSync("Sync • Up to date", "good");
+}
+
     function guardHousehold(){
       if(!state.user){
         toast("Please sign in first");
@@ -957,16 +1846,18 @@ const el = document.createElement("div");
       "Fruit & Veg",
       "Meat & Fish",
       "Dairy",
-      "Frozen",
       "Bakery",
       "Cereals & Breakfast",
       "Cupboard",
+      "Frozen",
       "Treats & Snacks",
       "Drinks",
       "Cleaning Products",
       "Toiletries",
       "Pets",
       "Household",
+      "Baby",
+      "Health & Pharmacy",
       "Uncategorised"
     ];
 
@@ -1207,7 +2098,7 @@ const el = document.createElement("div");
           const isSelf = m.uid === state.user?.uid;
           const mRole = m.role || "member";
           const row = document.createElement("div");
-          row.className = "item";
+          row.className = "item" + (it.picked ? " picked" : "");
           row.innerHTML = `
             <div class="grow">
               <div class="title">${isSelf ? "You" : "Member"} <span class="muted" style="font-weight:700">(${escapeHtml(mRole)})</span></div>
@@ -1278,7 +2169,7 @@ const el = document.createElement("div");
 
         for(const inv of invites){
           const row = document.createElement("div");
-          row.className = "item";
+          row.className = "item" + (it.picked ? " picked" : "");
           row.innerHTML = `
             <div class="grow">
               <div class="title">Invite code: ${escapeHtml(inv.code)}</div>
@@ -1358,7 +2249,37 @@ const el = document.createElement("div");
 
 
 
-    $("#btnCreateHousehold").addEventListener("click", async ()=>{
+    
+$("#btnAddCategory")?.addEventListener("click", ()=> addCategory());
+
+$("#btnAddTplItem")?.addEventListener("click", ()=>{
+  if(!guardHousehold()) return;
+  openTemplateItemModal(null);
+});
+
+$("#btnResetWeeklyNow")?.addEventListener("click", async ()=>{
+  if(!guardHousehold()) return;
+  const weekly = (state.lists || []).find(l=>l.type==="weekly" && !l.archived) || null;
+  if(!weekly){ toast("No Weekly Shop list found"); return; }
+  const ok = await confirmModal({
+    title:"Reset Weekly Shop now?",
+    message:"This will clear the current Weekly Shop items and restore your template.",
+    confirmLabel:"Reset",
+    confirmClass:"warn"
+  });
+  if(!ok) return;
+  await resetWeeklyShopToTemplate(state.selectedHouseholdId, weekly.id, isoWeekKey(new Date()));
+  toast("Weekly Shop reset");
+});
+
+$("#btnTestWeeklyPrompt")?.addEventListener("click", async ()=>{
+  if(!guardHousehold()) return;
+  // Force-show the reset prompt regardless of day/week
+  await weeklyResetCheck({force:true});
+});
+
+
+$("#btnCreateHousehold").addEventListener("click", async ()=>{
       const body = document.createElement("div");
       body.innerHTML = `
         <div class="muted" style="margin-bottom:10px">Create a shared household space for your lists.</div>
@@ -1552,6 +2473,7 @@ const el = document.createElement("div");
           cleanupHouseholdSubs();
           state.lists = [];
           renderLists();
+          attachItemsListener();
           setSync("Sync • Choose a household", "warn");
         }
       }, (err)=>{
@@ -1593,14 +2515,6 @@ const el = document.createElement("div");
 
     // Initial default tab
     setTab("lists");
-
-  
-    // PWA: service worker (app shell cache)
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW registration failed", e));
-      });
-    }
 
   </script>
 </body>
