@@ -303,7 +303,27 @@
     @media (prefers-reduced-motion: reduce){
       *{transition:none !important; animation:none !important}
     }
-  </style>
+  
+    /* Household selection + manage */
+    .hhRow{gap:10px}
+    .hhRow.selected{
+      outline: 2px solid var(--pink);
+      box-shadow: 0 0 0 6px rgba(255,61,127,.08), var(--shadow);
+    }
+    .iconBtn{
+      width: 40px; height: 40px;
+      border-radius: 14px;
+      border: 1px solid var(--divider);
+      background: rgba(255,255,255,.7);
+      display:flex; align-items:center; justify-content:center;
+      cursor:pointer;
+      transition: transform .12s ease, filter .12s ease;
+      box-shadow:none;
+      padding:0;
+    }
+    .iconBtn:active{transform: scale(.96)}
+    .iconBtn svg{width:18px;height:18px}
+</style>
 </head>
 <body>
   <div class="app">
@@ -414,7 +434,8 @@
               <button class="btn secondary" id="btnJoinHousehold" type="button">Join with code</button>
             </div>
 
-            <div class="sep"></div>
+
+<div class="sep"></div>
             <div class="h1" style="font-size:15px">Setup</div>
             <div class="muted">Categories and weekly template will live here (next).</div>
           </div>
@@ -492,7 +513,7 @@
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import {
       getFirestore, doc, getDoc, setDoc, addDoc, collection, serverTimestamp,
-      onSnapshot, query, orderBy, writeBatch
+      onSnapshot, query, orderBy, where, limit, writeBatch, updateDoc, deleteDoc
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
     // === Firebase config (provided by Rich) ===
@@ -578,7 +599,9 @@
     function hideModal(){
       $("#modalBackdrop").classList.remove("show");
       $("#modalBackdrop").setAttribute("aria-hidden","true");
+          stopHouseholdSettingsListeners();
     }
+
     $("#modalClose").addEventListener("click", hideModal);
     $("#modalBackdrop").addEventListener("click", (e)=>{ if(e.target.id==="modalBackdrop") hideModal(); });
 
@@ -650,19 +673,28 @@
       list.style.display = "flex";
 
       for(const h of state.households){
-        const el = document.createElement("div");
-        el.className = "item";
         const isSelected = h.householdId === state.selectedHouseholdId;
-        const role = h.role || "member";
+const el = document.createElement("div");
+        el.className = "item hhRow" + (isSelected ? " selected" : "");
+                const role = h.role || "member";
 
         el.innerHTML = `
           <div class="grow">
-            <div class="title">${escapeHtml(h.householdName || "Household")}${isSelected ? " • Selected" : ""}</div>
+            <div class="title">${escapeHtml(h.householdName || "Household")}</div>
             <div class="sub">${escapeHtml(h.householdId)} • ${escapeHtml(role)}</div>
           </div>
+          
+          <button class="iconBtn" type="button" data-manage aria-label="Household settings" title="Household settings">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 15.6a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2Z" stroke="currentColor" stroke-width="2"/>
+              <path d="M19.4 13.2a7.9 7.9 0 0 0 0-2.4l2-1.5-2-3.4-2.4.8a8.3 8.3 0 0 0-2.1-1.2L14.4 2h-4.8l-.5 2.5c-.7.3-1.4.7-2.1 1.2l-2.4-.8-2 3.4 2 1.5a7.9 7.9 0 0 0 0 2.4l-2 1.5 2 3.4 2.4-.8c.7.5 1.4.9 2.1 1.2l.5 2.5h4.8l.5-2.5c.7-.3 1.4-.7 2.1-1.2l2.4.8 2-3.4-2-1.5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            </svg>
+          </button>
           <div class="badge ${role==="owner" ? "owner":""}">${role==="owner" ? "Owner" : "Member"}</div>
+        
         `;
-        el.addEventListener("click", ()=> selectHousehold(h.householdId));
+        el.addEventListener("click", ()=> selectHousehold(h.householdId, {silent:true}));
+        el.querySelector("[data-manage]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openHouseholdSettings(h.householdId); });
         list.appendChild(el);
       }
     }
@@ -673,22 +705,85 @@
       }[c]));
     }
 
-    async function selectHousehold(hid){
+    async function selectHousehold(hid, opts={}){
       state.selectedHouseholdId = hid;
       localStorage.setItem("bb.selectedHouseholdId", hid);
       setSync("Sync • Loading household…", "warn");
       await loadSelectedHousehold();
-      toast("Household selected");
-      // Default to Lists tab for main work
-      setTab("lists");
-
-    // PWA: service worker (app shell cache)
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW registration failed", e));
-      });
+      renderHouseholds();
+      if(!opts.silent) toast("Household selected");
     }
 
+    async function openHouseholdSettings(hid){
+      if(!state.user){
+        toast("Please sign in first");
+        setTab("account");
+        return;
+      }
+      // Ensure selection is set, but keep the user on Account
+      if(state.selectedHouseholdId !== hid){
+        await selectHousehold(hid, {silent:true});
+      }
+
+      const role = state.selectedRole || "member";
+      const hhName = state.selectedHouseholdName || "Household";
+
+      // Clean up any previous settings listeners (if modal was left open somehow)
+      stopHouseholdSettingsListeners();
+
+      showModal({
+        title: "Household settings",
+        body: `
+          <div class="card flat" style="margin:0">
+            <div class="h1" style="margin:0">${escapeHtml(hhName)}</div>
+            <div class="muted" style="margin-top:6px">${escapeHtml(hid)} • ${escapeHtml(role==="owner" ? "Owner" : "Member")}</div>
+          </div>
+
+          <div class="sep"></div>
+
+          <div class="h1" style="font-size:15px">Members</div>
+          <div class="muted">Who has access to this household.</div>
+          <div class="sep"></div>
+          <div id="hsMembersEmpty" class="muted">Loading members…</div>
+          <div id="hsMembersList" class="list" style="display:none"></div>
+
+          <div class="sep"></div>
+
+          <div class="h1" style="font-size:15px">Invites</div>
+          <div class="muted">Share a code so someone can join this household.</div>
+          <div class="sep"></div>
+          <div id="hsInvitesGuard" class="muted">Only the household owner can create invites.</div>
+          <div id="hsInvitesBlock" style="display:none">
+            <div id="hsInvitesEmpty" class="muted">No active invite codes.</div>
+            <div id="hsInvitesList" class="list" style="display:none"></div>
+            <div class="sep"></div>
+            <div class="row wrap">
+              <button class="btn primary" id="hsCreateInvite" type="button">Create invite code</button>
+            </div>
+          </div>
+        `,
+        footerButtons: [
+          role==="owner"
+            ? { label:"Close", className:"btn ghost" }
+            : { label:"Leave household", className:"btn danger", onClick: async ()=>{
+                showModal({
+                  title: "Leave household?",
+                  body: `<div class="muted">You will lose access to its lists, meals and settings.</div>`,
+                  footerButtons: [
+                    {label:"Cancel", className:"btn ghost"},
+                    {label:"Leave", className:"btn danger", onClick: async ()=>{
+                      setSync("Sync • Leaving household…", "warn");
+                      await leaveHousehold(hid);
+                      toast("Left household");
+                    }}
+                  ]
+                });
+                return false;
+              }}
+        ]
+      });
+
+      startHouseholdSettingsListeners(hid, role);
     }
 
     async function loadSelectedHousehold(){
@@ -805,13 +900,6 @@
       setCurrentListId(weeklyId);
       setTab("lists");
 
-    // PWA: service worker (app shell cache)
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW registration failed", e));
-      });
-    }
-
     });
 
     $("#btnNewList").addEventListener("click", async ()=>{
@@ -881,6 +969,394 @@
       "Household",
       "Uncategorised"
     ];
+
+    // === Invites (owner-only) ===
+    let unsubInvites = null;
+
+    function makeInviteCode(len=6){
+      // Avoid ambiguous characters
+      const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const bytes = new Uint8Array(len);
+      crypto.getRandomValues(bytes);
+      let out = "";
+      for(let i=0;i<len;i++){
+        out += alphabet[bytes[i] % alphabet.length];
+      }
+      return out;
+    }
+
+    function stopInvitesListener(){
+      if(unsubInvites){ try{unsubInvites()}catch{} }
+      unsubInvites = null;
+    }
+
+    function setInvitesUIState(){
+      const guard = $("#invitesGuard");
+      const ownerOnly = $("#invitesOwnerOnly");
+      const block = $("#invitesBlock");
+
+      if(!guard || !ownerOnly || !block) return;
+
+      if(!state.user){
+        guard.style.display = "block";
+        guard.textContent = "Sign in to manage invites.";
+        ownerOnly.style.display = "none";
+        block.style.display = "none";
+        stopInvitesListener();
+        return;
+      }
+      if(!state.selectedHouseholdId){
+        guard.style.display = "block";
+        guard.textContent = "Select a household to manage invites.";
+        ownerOnly.style.display = "none";
+        block.style.display = "none";
+        stopInvitesListener();
+        return;
+      }
+      guard.style.display = "none";
+
+      if(state.selectedRole !== "owner"){
+        ownerOnly.style.display = "block";
+        block.style.display = "none";
+        stopInvitesListener();
+        return;
+      }
+      ownerOnly.style.display = "none";
+      block.style.display = "block";
+    }
+
+    function startInvitesListener(){
+      
+      if(!(state.user && state.selectedHouseholdId && state.selectedRole==="owner")) return;
+
+      stopInvitesListener();
+      const qy = query(
+        collection(db, "invites"),
+        where("householdId", "==", state.selectedHouseholdId),
+        where("active", "==", true),
+        limit(10)
+      );
+
+      unsubInvites = onSnapshot(qy, (snap)=>{
+        const invites = snap.docs.map(d=>({ code: d.id, ...d.data() }));
+        renderInvites(invites);
+      }, (err)=>{
+        console.error(err);
+        toast("Couldn’t load invites (permissions)", {ms: 3200});
+      });
+    }
+
+    function renderInvites(invites){
+      const list = $("#invitesList");
+      const empty = $("#invitesEmpty");
+      if(!list || !empty) return;
+
+      list.innerHTML = "";
+
+      if(!invites.length){
+        empty.style.display = "block";
+        list.style.display = "none";
+        return;
+      }
+      empty.style.display = "none";
+      list.style.display = "flex";
+
+      invites.forEach(inv=>{
+        const el = document.createElement("div");
+        el.className = "item";
+        el.innerHTML = `
+          <div class="grow">
+            <div class="title">Invite code: ${escapeHtml(inv.code)}</div>
+            <div class="sub">Active • Share this code to join</div>
+          </div>
+          <button class="btn secondary small" type="button" data-copy>Copy</button>
+          <button class="btn danger small" type="button" data-deactivate>Disable</button>
+        `;
+        el.querySelector("[data-copy]").addEventListener("click", async (e)=>{
+          e.stopPropagation();
+          try{
+            await navigator.clipboard.writeText(inv.code);
+            toast("Invite code copied");
+          }catch{
+            toast("Couldn’t copy — you can select and copy manually", {ms: 3200});
+          }
+        });
+        el.querySelector("[data-deactivate]").addEventListener("click", async (e)=>{
+          e.stopPropagation();
+          showModal({
+            title: "Disable invite?",
+            body: `<div class="muted">This code will stop working immediately.</div>`,
+            footerButtons: [
+              { label:"Cancel", className:"btn ghost" },
+              { label:"Disable", className:"btn danger", onClick: async ()=>{
+                  setSync("Sync • Updating invite…", "warn");
+                  await updateDoc(doc(db, "invites", inv.code), { active: false });
+                  toast("Invite disabled");
+                }
+              }
+            ]
+          });
+        });
+        list.appendChild(el);
+      });
+    }
+
+    $("#btnCreateInvite")?.addEventListener("click", async ()=>{
+      if(!(state.user && state.selectedHouseholdId)) { toast("Select a household first"); return; }
+      if(state.selectedRole !== "owner"){ toast("Only the owner can create invites"); return; }
+
+      setSync("Sync • Creating invite…", "warn");
+      let code = null;
+      for(let i=0;i<3;i++){
+        const c = makeInviteCode(6);
+        const snap = await getDoc(doc(db, "invites", c));
+        if(!snap.exists()){ code = c; break; }
+      }
+      if(!code){ toast("Couldn’t generate a code — try again"); setSync("Sync • Up to date", "good"); return; }
+
+      await setDoc(doc(db, "invites", code), {
+        householdId: state.selectedHouseholdId,
+        active: true,
+        createdAt: serverTimestamp(),
+        createdByUid: state.user.uid
+      });
+
+      showModal({
+        title: "Invite code created",
+        body: `
+          <div class="muted" style="margin-bottom:10px">Share this code so someone can join your household.</div>
+          <div class="card flat" style="margin:0; padding:12px; border-radius:14px; border:1px solid var(--divider);">
+            <div style="font-weight:900; font-size:22px; letter-spacing:2px; text-align:center">${code}</div>
+          </div>
+          <div class="muted" style="margin-top:10px">Tip: codes can be disabled at any time.</div>
+        `,
+        footerButtons: [
+          { label:"Copy", className:"btn primary", onClick: async ()=>{
+              try{ await navigator.clipboard.writeText(code); toast("Invite code copied"); }catch{}
+            }
+          },
+          { label:"Done", className:"btn ghost" }
+        ]
+      });
+    });
+
+
+    // === Household settings (modal) listeners ===
+    let unsubHSMembers = null;
+    let unsubHSInvites = null;
+
+    function stopHouseholdSettingsListeners(){
+      if(unsubHSMembers){ try{unsubHSMembers()}catch{} }
+      if(unsubHSInvites){ try{unsubHSInvites()}catch{} }
+      unsubHSMembers = null;
+      unsubHSInvites = null;
+    }
+
+    async function removeMember(hid, memberUid){
+      if(state.selectedRole !== "owner") throw new Error("Only the owner can manage members");
+      if(memberUid === state.user?.uid) throw new Error("You can’t remove yourself");
+      await deleteDoc(doc(db, "households", hid, "members", memberUid));
+      // Best effort: remove their per-user index entry too
+      try{ await deleteDoc(doc(db, "users", memberUid, "households", hid)); }catch{}
+    }
+
+    async function leaveHousehold(hid){
+      if(!state.user) throw new Error("Not signed in");
+      if(state.selectedRole === "owner") throw new Error("Owners can’t leave (transfer ownership first)");
+      const uid = state.user.uid;
+      await deleteDoc(doc(db, "households", hid, "members", uid));
+      await deleteDoc(doc(db, "users", uid, "households", hid));
+
+      if(state.selectedHouseholdId === hid){
+        state.selectedHouseholdId = null;
+        state.selectedHouseholdName = null;
+        state.selectedRole = null;
+        localStorage.removeItem("bb.selectedHouseholdId");
+        setCurrentListId(null);
+        cleanupHouseholdSubs();
+        state.lists = [];
+        renderLists();
+        setCtx();
+      }
+      renderHouseholds();
+    }
+
+    function startHouseholdSettingsListeners(hid, role){
+      stopHouseholdSettingsListeners();
+
+      // Members
+      const membersEmpty = $("#hsMembersEmpty");
+      const membersList = $("#hsMembersList");
+
+      unsubHSMembers = onSnapshot(collection(db, "households", hid, "members"), (snap)=>{
+        const members = snap.docs.map(d=>({ uid: d.id, ...d.data() }));
+        if(!membersEmpty || !membersList) return;
+        membersList.innerHTML = "";
+
+        if(!members.length){
+          membersEmpty.style.display = "block";
+          membersEmpty.textContent = "No members found.";
+          membersList.style.display = "none";
+          return;
+        }
+
+        membersEmpty.style.display = "none";
+        membersList.style.display = "flex";
+
+        for(const m of members){
+          const isSelf = m.uid === state.user?.uid;
+          const mRole = m.role || "member";
+          const row = document.createElement("div");
+          row.className = "item";
+          row.innerHTML = `
+            <div class="grow">
+              <div class="title">${isSelf ? "You" : "Member"} <span class="muted" style="font-weight:700">(${escapeHtml(mRole)})</span></div>
+              <div class="sub">${escapeHtml(m.uid)}</div>
+            </div>
+            ${role==="owner" && !isSelf ? `<button class="btn danger small" type="button" data-remove>Remove</button>` : ``}
+          `;
+          row.querySelector("[data-remove]")?.addEventListener("click", (e)=>{
+            e.stopPropagation();
+            showModal({
+              title: "Remove member?",
+              body: `<div class="muted">They will lose access to this household.</div>`,
+              footerButtons: [
+                {label:"Cancel", className:"btn ghost"},
+                {label:"Remove", className:"btn danger", onClick: async ()=>{
+                  setSync("Sync • Removing member…", "warn");
+                  await removeMember(hid, m.uid);
+                  toast("Member removed");
+                }}
+              ]
+            });
+          });
+          membersList.appendChild(row);
+        }
+      }, (err)=>{
+        console.error(err);
+        if(membersEmpty) {
+          membersEmpty.style.display = "block";
+          membersEmpty.textContent = "Couldn’t load members (permissions).";
+        }
+        if(membersList) membersList.style.display = "none";
+      });
+
+      // Invites (owner only)
+      const guard = $("#hsInvitesGuard");
+      const block = $("#hsInvitesBlock");
+      const list = $("#hsInvitesList");
+      const empty = $("#hsInvitesEmpty");
+      const btn = $("#hsCreateInvite");
+
+      if(role !== "owner"){
+        if(guard) guard.style.display = "block";
+        if(block) block.style.display = "none";
+        return;
+      }
+      if(guard) guard.style.display = "none";
+      if(block) block.style.display = "block";
+
+      const qy = query(
+        collection(db, "invites"),
+        where("householdId", "==", hid),
+        where("active", "==", true),
+        limit(10)
+      );
+
+      unsubHSInvites = onSnapshot(qy, (snap)=>{
+        const invites = snap.docs.map(d=>({ code: d.id, ...d.data() }));
+        if(!list || !empty) return;
+
+        list.innerHTML = "";
+        if(!invites.length){
+          empty.style.display = "block";
+          list.style.display = "none";
+          return;
+        }
+        empty.style.display = "none";
+        list.style.display = "flex";
+
+        for(const inv of invites){
+          const row = document.createElement("div");
+          row.className = "item";
+          row.innerHTML = `
+            <div class="grow">
+              <div class="title">Invite code: ${escapeHtml(inv.code)}</div>
+              <div class="sub">Active • Share to join</div>
+            </div>
+            <button class="btn secondary small" type="button" data-copy>Copy</button>
+            <button class="btn danger small" type="button" data-disable>Disable</button>
+          `;
+          row.querySelector("[data-copy]")?.addEventListener("click", async (e)=>{
+            e.stopPropagation();
+            try{
+              await navigator.clipboard.writeText(inv.code);
+              toast("Invite code copied");
+            }catch{
+              toast("Couldn’t copy — you can select and copy manually", {ms: 3200});
+            }
+          });
+          row.querySelector("[data-disable]")?.addEventListener("click", (e)=>{
+            e.stopPropagation();
+            showModal({
+              title: "Disable invite?",
+              body: `<div class="muted">This code will stop working immediately.</div>`,
+              footerButtons: [
+                {label:"Cancel", className:"btn ghost"},
+                {label:"Disable", className:"btn danger", onClick: async ()=>{
+                  setSync("Sync • Updating invite…", "warn");
+                  await updateDoc(doc(db, "invites", inv.code), { active:false });
+                  toast("Invite disabled");
+                }}
+              ]
+            });
+          });
+          list.appendChild(row);
+        }
+      }, (err)=>{
+        console.error(err);
+        toast("Couldn’t load invites (permissions)", {ms: 3200});
+      });
+
+      // Create invite button (bind once per modal open)
+      btn?.addEventListener("click", async ()=>{
+        if(state.selectedRole !== "owner"){ toast("Only the owner can create invites"); return; }
+
+        setSync("Sync • Creating invite…", "warn");
+        let code = null;
+        for(let i=0;i<3;i++){
+          const c = makeInviteCode(6);
+          const snap = await getDoc(doc(db, "invites", c));
+          if(!snap.exists()){ code = c; break; }
+        }
+        if(!code){ toast("Couldn’t generate a code — try again"); setSync("Sync • Up to date", "good"); return; }
+
+        await setDoc(doc(db, "invites", code), {
+          householdId: hid,
+          active: true,
+          createdAt: serverTimestamp(),
+          createdByUid: state.user.uid
+        });
+
+        showModal({
+          title: "Invite code created",
+          body: `
+            <div class="muted" style="margin-bottom:10px">Share this code so someone can join <b>${escapeHtml(state.selectedHouseholdName || "this household")}</b>.</div>
+            <div class="card flat" style="margin:0; padding:12px; border-radius:14px; border:1px solid var(--divider);">
+              <div style="font-weight:900; font-size:22px; letter-spacing:2px; text-align:center">${code}</div>
+            </div>
+          `,
+          footerButtons: [
+            {label:"Copy", className:"btn primary", onClick: async ()=>{ try{ await navigator.clipboard.writeText(code); toast("Invite code copied"); }catch{} }},
+            {label:"Done", className:"btn ghost"}
+          ]
+        });
+      }, { once:true });
+    }
+
+
+
+
 
     $("#btnCreateHousehold").addEventListener("click", async ()=>{
       const body = document.createElement("div");
@@ -981,13 +1457,6 @@
       await loadSelectedHousehold();
       setTab("lists");
 
-    // PWA: service worker (app shell cache)
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW registration failed", e));
-      });
-    }
-
     }
 
     $("#btnJoinHousehold").addEventListener("click", async ()=>{
@@ -1052,7 +1521,10 @@
       const colRef = collection(db, "users", uid, "households");
       const qy = query(colRef, orderBy("householdName", "asc"));
       state.unsubHouseholds = onSnapshot(qy, (snap)=>{
-        state.households = snap.docs.map(d=> d.data());
+        state.households = snap.docs.map(d=>{
+          const data = d.data();
+          return { id: d.id, ...data, householdId: data.householdId || d.id };
+        });
         renderHouseholds();
 
         // If selected household no longer exists, clear selection.
@@ -1122,6 +1594,7 @@
     // Initial default tab
     setTab("lists");
 
+  
     // PWA: service worker (app shell cache)
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
