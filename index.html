@@ -682,7 +682,7 @@
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import {
       getFirestore, doc, getDoc, setDoc, addDoc, collection, serverTimestamp,
-      onSnapshot, query, orderBy, where, limit, getDocs, writeBatch, updateDoc, deleteDoc, deleteField
+      onSnapshot, query, orderBy, where, limit, getDocs, writeBatch, updateDoc, deleteDoc, deleteField, documentId
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
     // === Firebase config (provided by Rich) ===
@@ -3278,7 +3278,61 @@ $("#btnCreateHousehold").addEventListener("click", async ()=>{
     });
 
     // === Auth state listener ===
-    function startHouseholdsListener(uid){
+    
+    // --- Household index hygiene ---
+    // If a household is deleted from /households/{householdId} but a user's index doc
+    // /users/{uid}/households/{householdId} is not cleaned up, it can "ghost" in the UI.
+    // We prune these stale index docs client-side (best-effort) to keep the Account UI accurate.
+    async function pruneStaleHouseholdIndex(uid, households){
+      try{
+        const ids = Array.from(new Set((households||[]).map(h=>h.householdId || h.id).filter(Boolean)));
+        if(!ids.length) return;
+
+        // We cannot query/list households under secure rules (list is typically blocked).
+        // Instead, attempt a per-household get(). If it fails or the doc is missing, treat the index entry as stale.
+        const stale = [];
+        for(const hid of ids){
+          try{
+            const hs = await getDoc(doc(db, "households", hid));
+            if(!hs.exists()) stale.push(hid);
+          }catch(e){
+            // If we can't read the household doc (e.g., it was deleted and membership no longer exists),
+            // prune the user index entry anyway to prevent "ghost" households.
+            stale.push(hid);
+          }
+        }
+
+        if(!stale.length) return;
+
+        // Delete stale user index docs (best-effort).
+        for(const hid of stale){
+          await deleteDoc(doc(db, "users", uid, "households", hid)).catch(()=>{});
+        }
+
+        // If the currently selected household is stale, clear selection immediately.
+        if(state.selectedHouseholdId && stale.includes(state.selectedHouseholdId)){
+          state.selectedHouseholdId = null;
+          state.selectedHouseholdName = null;
+          state.selectedRole = null;
+          localStorage.removeItem("bb.selectedHouseholdId");
+          setCurrentListId(null);
+        }
+      }catch(e){
+        console.warn("Household index prune failed", e);
+      }
+    }
+
+function scheduleHouseholdIndexPrune(uid){
+      clearTimeout(state._pruneHouseholdsT);
+      state._pruneHouseholdsT = setTimeout(()=>{
+        if(state._pruningHouseholds) return;
+        state._pruningHouseholds = true;
+        pruneStaleHouseholdIndex(uid, state.households || [])
+          .finally(()=>{ state._pruningHouseholds = false; });
+      }, 400);
+    }
+
+function startHouseholdsListener(uid){
       state.unsubHouseholds?.();
       const colRef = collection(db, "users", uid, "households");
       const qy = query(colRef, orderBy("householdName", "asc"));
@@ -3288,6 +3342,7 @@ $("#btnCreateHousehold").addEventListener("click", async ()=>{
           return { id: d.id, ...data, householdId: data.householdId || d.id };
         });
         renderHouseholds();
+        scheduleHouseholdIndexPrune(uid);
 
         // If selected household no longer exists, clear selection.
         if(state.selectedHouseholdId && !state.households.some(h=>h.householdId===state.selectedHouseholdId)){
