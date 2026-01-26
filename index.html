@@ -2903,7 +2903,7 @@ async function resetWeeklyShopToTemplate(hid, weeklyListId, weekKey){
           const isSelf = m.uid === state.user?.uid;
           const mRole = m.role || "member";
           const row = document.createElement("div");
-          row.className = "item" + (it.picked ? " picked" : "");
+          row.className = "item";
           row.innerHTML = `
             <div class="grow">
               <div class="title">${isSelf ? "You" : "Member"} <span class="muted" style="font-weight:700">(${escapeHtml(mRole)})</span></div>
@@ -2974,7 +2974,7 @@ async function resetWeeklyShopToTemplate(hid, weeklyListId, weekKey){
 
         for(const inv of invites){
           const row = document.createElement("div");
-          row.className = "item" + (it.picked ? " picked" : "");
+          row.className = "item";
           row.innerHTML = `
             <div class="grow">
               <div class="title">Invite code: ${escapeHtml(inv.code)}</div>
