@@ -254,6 +254,7 @@
     .modal-backdrop.show{display:flex}
     .modal{
       width: min(560px, 100%);
+      max-height: calc(100vh - 24px);
       background:#fff;
       border-radius: 22px;
       box-shadow: 0 24px 60px rgba(15,23,42,.22);
@@ -273,7 +274,7 @@
                   #fff;
     }
     .modal .mhead .mtitle{font-weight: 900}
-    .modal .mbody{padding: 14px}
+    .modal .mbody{padding: 14px; max-height: calc(100vh - 220px); overflow:auto; -webkit-overflow-scrolling: touch}
     .modal .mfoot{
       padding: 12px 14px 14px;
       display:flex; gap:10px;
@@ -359,6 +360,27 @@
     }
     .item.picked .title{ color: #0b6b3a; }
     .item.picked .sub{ color: rgba(11,107,58,.80); }
+
+    /* Meals planner */
+    .dayRow{ display:flex; align-items:center; gap:10px; padding: 12px; border: 1px solid var(--divider); border-radius: 18px; background: rgba(255,255,255,.8); }
+    .dayLabel{ width: 78px; font-weight: 900; color: var(--text); }
+    .dayLabel .sub{ font-size:12px; font-weight:800; color: var(--text2); margin-top:2px }
+    .select{ width:100%; border-radius: 14px; border: 1px solid var(--divider); padding: 12px 12px; min-height: var(--tap); background:#fff; }
+    .select:focus{ border-color: rgba(255,61,127,.55); box-shadow: 0 0 0 4px rgba(255,61,127,.12); outline:none; }
+
+    /* Ingredient picker + meal tags */
+    .pickCheck{ width:20px; height:20px; flex:0 0 auto; }
+    .mealTag{
+      display:inline-flex; align-items:center;
+      padding:4px 8px; border-radius:999px;
+      background: rgba(255,197,66,.25);
+      border: 1px solid rgba(255,197,66,.55);
+      color:#5A3A00;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .mealTagWrap{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -442,10 +464,51 @@
       <!-- MEALS -->
       <section id="panel-meals" class="panel">
         <div class="card">
-          <div class="h1">Meals</div>
-          <div class="muted">Store regular meals and add ingredients to your weekly shop.</div>
+          <div class="row" style="align-items:flex-end">
+            <div class="grow">
+              <div class="h1">Next week</div>
+              <div class="muted">Evening meals (Mon–Sun), planned ahead.</div>
+            </div>
+            <div class="row" style="gap:8px; align-items:center; justify-content:flex-end">
+              <button class="btn ghost small" id="btnTogglePlanner" type="button" aria-label="Minimise planner">–</button>
+              <div class="badge" id="mealsWeekKey">—</div>
+            </div>
+          </div>
           <div class="sep"></div>
-          <div class="muted">Coming next: meals library + evening calendar + merge into Weekly shop.</div>
+
+          <div id="mealsPlannerEmpty" class="muted">Select a household to plan meals.</div>
+
+          <div id="mealsPlannerWrap" style="display:none">
+            <div id="plannerBody">
+            <div id="plannerDays" class="list"></div>
+            <div class="sep"></div>
+            <div class="row" style="gap:10px; justify-content:flex-end">
+              <button class="btn secondary" id="btnClearWeek" type="button">Clear week</button>
+              <button class="btn primary" id="btnAddWeekToShop" type="button">Add ingredients to Weekly Shop</button>
+            </div>
+          
+          </div>
+        </div>
+        </div>
+
+        <div class="card">
+          <div class="row" style="align-items:flex-end">
+            <div class="grow">
+              <div class="h1">Meals</div>
+              <div class="muted">Store your regulars and re‑use them any time.</div>
+            </div>
+            <button class="btn primary" id="btnNewMeal" type="button">New meal</button>
+          </div>
+          <div class="sep"></div>
+
+          <div class="field" style="margin:0">
+            <input id="mealSearch" placeholder="Search meals…" />
+          </div>
+
+          <div class="sep"></div>
+
+          <div id="mealsEmpty" class="muted">No meals yet. Add one to get started.</div>
+          <div id="mealsWrap" class="list" style="display:none"></div>
         </div>
       </section>
 
@@ -738,6 +801,7 @@
       $$(".panel").forEach(p=>p.classList.remove("active"));
       $("#panel-"+name).classList.add("active");
       if(name==="build") renderBuild();
+      if(name==="meals"){ attachMealsListeners(); renderMeals(); }
     }
     $$(".tab").forEach(t=> t.addEventListener("click", ()=> setTab(t.dataset.tab)));
 
@@ -758,6 +822,11 @@
       unsubCategories: null,
       unsubConfig: null,
       unsubItems: null,
+      unsubMeals: null,
+      unsubMealPlan: null,
+      meals: [],
+      mealPlan: { assignments: {} },
+      mealsWeekKey: null,
       items: [],
       showPicked: false,
       lastFocusEl: null,
@@ -979,6 +1048,9 @@ const el = document.createElement("div");
         $("#listsEmpty").textContent = "Couldn’t load lists (permissions).";
       });
 
+      // Meals (library + plan)
+      attachMealsListeners();
+
 // Listen to categories (ordered)
 const catsQ = query(collection(db, "households", hid, "categories"), orderBy("order", "asc"));
 state.unsubCategories = onSnapshot(catsQ, (snap)=>{
@@ -1010,6 +1082,7 @@ scheduleWeeklyResetCheck();
   state.categories = [];
   state.config = null;
   cleanupItemsSub();
+  cleanupMealsSubs();
 }
 
 
@@ -1056,6 +1129,17 @@ scheduleWeeklyResetCheck();
       if(!u) return String(qn);
       return `${qn} ${u}`;
     }
+
+    function renderMealTags(it){
+      const tags = Array.isArray(it?.mealTags) ? it.mealTags.filter(Boolean) : [];
+      if(!tags.length) return "";
+      const shown = tags.slice(0,2);
+      const extra = tags.length - shown.length;
+      const pills = shown.map(t=>`<span class="mealTag">${escapeHtml(t)}</span>`).join("");
+      const more = extra>0 ? `<span class="mealTag">+${extra}</span>` : "";
+      return `<div class="mealTagWrap">${pills}${more}</div>`;
+    }
+
 
     function renderBuild(){
       const empty = $("#buildEmpty");
@@ -1125,6 +1209,7 @@ scheduleWeeklyResetCheck();
           row.innerHTML = `
             <div class="grow">
               <div class="title">${escapeHtml(it.name || "Item")}</div>
+              ${renderMealTags(it)}
               <div class="sub">${qtyTxt ? escapeHtml(qtyTxt) + " • " : ""}${escapeHtml(categoryLabel(it.categoryId))}${it.notes ? " • " + escapeHtml(it.notes) : ""}${it.picked ? " • Picked" : ""}</div>
             </div>
             <button class="btn secondary small" type="button" data-toggle>${it.picked ? "Unpick" : "Pick"}</button>
@@ -1602,15 +1687,15 @@ async function deleteTemplateItem(id){
       return ref.id;
     }
 
-    $("#btnOpenWeekly").addEventListener("click", async ()=>{
+    $("#btnOpenWeekly").addEventListener("click", ()=>{
       if(!guardHousehold()) return;
-      const weeklyId = await ensureWeeklyList(state.selectedHouseholdId);
-      setCurrentListId(weeklyId);
-      setTab("lists");
-
+      const weekly = (state.lists||[]).find(l=>l.type==="weekly" && !l.archived) || null;
+      if(!weekly){ toast("No Weekly Shop list found"); return; }
+      setCurrentListId(weekly.id);
+      setTab("shop");
     });
 
-    $("#btnNewList").addEventListener("click", async ()=>{
+$("#btnNewList").addEventListener("click", async ()=>{
       if(!guardHousehold()) return;
 
       const body = document.createElement("div");
@@ -1656,6 +1741,37 @@ async function deleteTemplateItem(id){
       state.showPicked = !state.showPicked;
       renderBuild();
     });
+
+
+    // Meals tab
+
+    $("#btnTogglePlanner")?.addEventListener("click", ()=>{
+      const collapsed = localStorage.getItem("bb.mealsPlannerCollapsed") === "1";
+      localStorage.setItem("bb.mealsPlannerCollapsed", collapsed ? "0" : "1");
+      renderMeals();
+    });
+    $("#btnNewMeal")?.addEventListener("click", ()=>{ if(!guardHousehold()) return; openMealEditor(null); });
+    $("#mealSearch")?.addEventListener("input", ()=> renderMeals());
+    $("#btnClearWeek")?.addEventListener("click", async ()=>{
+      if(!guardHousehold()) return;
+      const ok = await confirmModal({
+        title: "Clear this week?",
+        message: "This will remove all planned meals for the current week.",
+        confirmLabel: "Clear week",
+        confirmClass: "danger",
+        cancelLabel: "Cancel"
+      });
+      if(!ok) return;
+      const wk = state.mealsWeekKey || weekKeyNow();
+      await setDoc(doc(db, "households", state.selectedHouseholdId, "mealPlans", wk), {
+        weekKey: wk,
+        assignments: {},
+        updatedAt: serverTimestamp(),
+        updatedByUid: state.user.uid
+      }, { merge:true });
+      toast("Week cleared");
+    });
+    $("#btnAddWeekToShop")?.addEventListener("click", ()=>{ if(!guardHousehold()) return; openIngredientPickModal({source:"week"}); });
 
 
 
@@ -1749,6 +1865,616 @@ function openListSettings(list){
 
 }
 
+
+    // === Meals (MVP) ===
+    function cleanupMealsSubs(){
+      if(state.unsubMeals){ try{state.unsubMeals()}catch{} state.unsubMeals=null; }
+      if(state.unsubMealPlan){ try{state.unsubMealPlan()}catch{} state.unsubMealPlan=null; }
+      state.meals = [];
+      state.mealPlan = { assignments: {} };
+      state.mealsWeekKey = null;
+    }
+
+    function weekKeyNow(){
+      // We plan for the week ahead (next ISO week)
+      const now = new Date();
+      const d = new Date(now);
+      d.setDate(d.getDate() + 7);
+      return isoWeekKey(d);
+    }
+
+    function mealNorm(s){
+      return String(s||"").trim().toLowerCase().replace(/\s+/g," ");
+    }
+
+    function parseQty(v){
+      if(v===null || v===undefined) return null;
+      const s = String(v).trim();
+      if(!s) return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function mealIngredientLine(it){
+      const q = (it.qty===null || it.qty===undefined) ? null : Number(it.qty);
+      const u = (it.unit||"").trim();
+      if(q===null || Number.isNaN(q)) return u ? u : "";
+      return u ? `${q} ${u}` : String(q);
+    }
+
+    function attachMealsListeners(){
+      if(!state.selectedHouseholdId){ renderMeals(); return; }
+      cleanupMealsSubs();
+
+      const mealsCol = collection(db, "households", state.selectedHouseholdId, "meals");
+      const mealsQ = query(mealsCol, orderBy("nameLower", "asc"));
+      state.unsubMeals = onSnapshot(mealsQ, (snap)=>{
+        state.meals = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+        renderMeals();
+      }, (err)=>{
+        console.error(err);
+        toast("Couldn’t load meals (permissions)");
+        state.meals = [];
+        renderMeals();
+      });
+
+      const wk = weekKeyNow();
+      state.mealsWeekKey = wk;
+      const planRef = doc(db, "households", state.selectedHouseholdId, "mealPlans", wk);
+      state.unsubMealPlan = onSnapshot(planRef, (ds)=>{
+        const data = ds.exists() ? ds.data() : {};
+        state.mealPlan = { assignments: data.assignments || {}, weekKey: wk };
+        renderMeals();
+      }, (err)=>{
+        console.error(err);
+        toast("Couldn’t load meal plan (permissions)");
+        state.mealPlan = { assignments: {} };
+        renderMeals();
+      });
+    }
+
+    function fmtDayLabel(i){
+      const days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+      return days[i] || "";
+    }
+
+    function renderMeals(){
+      $("#mealsWeekKey").textContent = state.mealsWeekKey ? fmtWcDate(isoWeekMonday(state.mealsWeekKey)) : "—";
+
+      const emptyPlanner = $("#mealsPlannerEmpty");
+      const wrapPlanner = $("#mealsPlannerWrap");
+      const daysWrap = $("#plannerDays");
+
+      if(!state.user || !state.selectedHouseholdId){
+        emptyPlanner.style.display = "block";
+        wrapPlanner.style.display = "none";
+        $("#mealsEmpty").style.display = "block";
+        $("#mealsWrap").style.display = "none";
+        return;
+      }
+
+      emptyPlanner.style.display = "none";
+      wrapPlanner.style.display = "block";
+
+      // Planner collapse (stored locally per device)
+      const collapsed = localStorage.getItem("bb.mealsPlannerCollapsed") === "1";
+      const plannerBody = $("#plannerBody");
+      const btnToggle = $("#btnTogglePlanner");
+      if(plannerBody) plannerBody.style.display = collapsed ? "none" : "block";
+      if(btnToggle) btnToggle.textContent = collapsed ? "+" : "–";
+
+      const meals = state.meals || [];
+      const opts = [`<option value="">—</option>`, `<option value="__none__">Meal not needed</option>`].concat(meals.map(m=>`<option value="${escapeHtml(m.id)}">${escapeHtml(m.name||"Meal")}</option>`)).join("");
+
+      const assign = state.mealPlan?.assignments || {};
+      daysWrap.innerHTML = "";
+      for(let i=0;i<7;i++){
+        const key = String(i);
+        const sel = assign[key] || "";
+        const row = document.createElement("div");
+        row.className = "dayRow";
+        row.innerHTML = `
+          <div class="dayLabel">
+            <div>${fmtDayLabel(i)}</div>
+            <div class="sub">Evening</div>
+          </div>
+          <div class="grow">
+            <select class="select" data-day="${key}">${opts}</select>
+          </div>
+          <button class="btn ghost small" type="button" data-clear data-day="${key}" aria-label="Clear day">×</button>
+        `;
+        const clearBtn = row.querySelector("button[data-clear]");
+        if(clearBtn){ clearBtn.dataset.day = key; clearBtn.addEventListener("click", async (e)=>{ e.preventDefault(); e.stopPropagation(); await setMealForDay(key, ""); }); }
+        const select = row.querySelector("select");
+        select.value = sel;
+        select.addEventListener("change", async (e)=>{
+          const mealId = e.target.value || "";
+          await setMealForDay(key, mealId);
+        });
+        daysWrap.appendChild(row);
+
+      }
+
+
+      const q = ($("#mealSearch").value || "").trim().toLowerCase();
+      const list = q ? meals.filter(m=>(m.nameLower||"").includes(q)) : meals;
+
+      const wrap = $("#mealsWrap");
+      const empty = $("#mealsEmpty");
+      wrap.innerHTML = "";
+
+      if(!list.length){
+        empty.style.display = "block";
+        wrap.style.display = "none";
+      } else {
+        empty.style.display = "none";
+        wrap.style.display = "flex";
+
+        for(const meal of list){
+          const ing = Array.isArray(meal.ingredients) ? meal.ingredients : [];
+          const el = document.createElement("div");
+          el.className = "item";
+          el.innerHTML = `
+            <div class="grow">
+              <div class="title">${escapeHtml(meal.name || "Meal")}</div>
+              <div class="sub">${ing.length} ingredient${ing.length===1?"":"s"}</div>
+            </div>
+            <div class="row" style="gap:8px; justify-content:flex-end; align-items:center">
+              <button class="btn secondary small" type="button" data-add-week>Add to week</button>
+              <button class="btn primary small" type="button" data-add-shop>Add ingredients</button>
+              <button class="iconBtn" type="button" data-edit aria-label="Edit">✎</button>
+              <button class="iconBtn danger" type="button" data-del aria-label="Delete">×</button>
+            </div>
+          `;
+
+          el.querySelector("[data-add-week]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openPickDayModal(meal.id); });
+          el.querySelector("[data-add-shop]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openIngredientPickModal({ source:"meal", mealIds:[meal.id] }); });
+          el.querySelector("[data-edit]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openMealEditor(meal); });
+          el.querySelector("[data-del]")?.addEventListener("click", async (e)=>{
+            e.stopPropagation();
+            const ok = await confirmModal({
+              title: "Delete meal?",
+              message: "This deletes the meal from your library.",
+              confirmLabel: "Delete",
+              confirmClass: "danger",
+              cancelLabel: "Cancel"
+            });
+            if(!ok) return;
+            await deleteDoc(doc(db, "households", state.selectedHouseholdId, "meals", meal.id));
+            toast("Meal deleted");
+          });
+
+          wrap.appendChild(el);
+        }
+      }
+    }
+
+    async function setMealForDay(dayKey, mealId){
+      if(!guardHousehold()) return;
+      const wk = state.mealsWeekKey || weekKeyNow();
+      const ref = doc(db, "households", state.selectedHouseholdId, "mealPlans", wk);
+      const current = (state.mealPlan?.assignments || {});
+      const next = { ...current };
+
+      if(mealId){
+        // Allow explicit "Meal not needed" marker without duplicate checks
+        if(mealId !== "__none__"){
+          // Prevent duplicate use of the same meal in the same week planner
+          const dupDay = Object.entries(next).find(([k,v])=>k!==String(dayKey) && v===mealId);
+          if(dupDay){
+            toast("That meal is already planned for another day.");
+            renderMeals(); // revert select back to saved state
+            return;
+          }
+        }
+        next[String(dayKey)] = mealId;
+      } else {
+        delete next[String(dayKey)];
+      }
+
+      // Optimistic UI update
+      state.mealPlan = { ...(state.mealPlan||{}), assignments: next, weekKey: wk };
+      renderMeals();
+
+      setSync("Sync • Saving…", "warn");
+      await setDoc(ref, {
+        weekKey: wk,
+        assignments: next,
+        updatedAt: serverTimestamp(),
+        updatedByUid: state.user.uid
+      }, { merge:true });
+      setSync("Sync • Up to date", "good");
+    }
+
+function openPickDayModal(mealId){
+      const days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+      showModal({
+        title: "Add to week",
+        body: `<div class="muted">Pick a day to assign this meal (evening).</div>
+               <div class="sep"></div>
+               <div class="list">
+                 ${days.map((d,i)=>`<button class="btn secondary" type="button" data-daypick="${i}" style="justify-content:flex-start">${d}</button>`).join("")}
+               </div>`,
+        footerButtons: [{label:"Close", className:"btn ghost"}]
+      });
+      const root = $("#modalBody");
+      root.querySelectorAll("[data-daypick]").forEach(btn=>{
+        btn.addEventListener("click", async ()=>{
+          await setMealForDay(btn.getAttribute("data-daypick"), mealId);
+          toast("Added to week");
+          hideModal();
+        });
+      });
+    }
+
+    function openMealEditor(meal=null){
+      const isEdit = !!meal;
+      const name = (meal?.name || "").trim();
+      const ingredients = Array.isArray(meal?.ingredients) ? meal.ingredients : [];
+      const cats = (state.categories || []).filter(c=>c.id!=="uncategorised");
+      const catOptions = cats.map(c=>`<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
+
+      const rowsHtml = (ingredients.length ? ingredients : [{name:"", qty:null, unit:"", categoryId:"", notes:""}]).map((it, idx)=>{
+        const q = (it.qty===null || it.qty===undefined) ? "" : String(it.qty);
+        const u = (it.unit||"");
+        const n = (it.name||"");
+        const notes = (it.notes||"");
+        const catId = it.categoryId || "";
+        return `
+          <div class="card" style="padding:12px; margin:10px 0" data-ing-row="${idx}">
+            <div class="row" style="gap:8px; align-items:flex-end">
+              <div class="grow field" style="margin:0">
+                <label>Ingredient</label>
+                <input data-ing-name value="${escapeHtml(n)}" placeholder="e.g. Tomatoes" />
+              </div>
+              <button class="btn danger small" type="button" data-ing-del>×</button>
+            </div>
+            <div class="grid2">
+              <div class="field">
+                <label>Qty</label>
+                <input data-ing-qty value="${escapeHtml(q)}" type="number" inputmode="decimal" placeholder="e.g. 2" />
+              </div>
+              <div class="field">
+                <label>Unit</label>
+                <input data-ing-unit value="${escapeHtml(u)}" placeholder="e.g. cans" />
+              </div>
+              <div class="field">
+                <label>Category</label>
+                <select class="select" data-ing-cat>
+                  <option value="">Uncategorised</option>
+                  ${catOptions}
+                </select>
+              </div>
+              <div class="field">
+                <label>Notes</label>
+                <input data-ing-notes value="${escapeHtml(notes)}" placeholder="optional" />
+              </div>
+            </div>
+          </div>`;
+      }).join("");
+
+      showModal({
+        title: isEdit ? "Edit meal" : "New meal",
+        body: `
+          <div class="field" style="margin-top:0">
+            <label>Meal name</label>
+            <input id="mealName" value="${escapeHtml(name)}" placeholder="e.g. Spaghetti Bolognese" />
+          </div>
+          <div class="sep"></div>
+          <div class="h1" style="font-size:14px; margin:0">Ingredients</div>
+          <div id="ingWrap">${rowsHtml}</div>
+          <button class="btn secondary" id="btnAddIngRow" type="button" style="width:100%; margin-top:10px">+ Add ingredient</button>
+        `,
+        footerButtons: [
+          { label:"Cancel", className:"btn ghost" },
+          { label: isEdit ? "Save" : "Create", className:"btn primary", onClick: async ()=>{
+              const mealName = ($("#mealName").value || "").trim();
+              if(!mealName){ toast("Please enter a meal name"); return false; }
+
+              const ingRows = Array.from($("#ingWrap").querySelectorAll("[data-ing-row]"));
+              const out = [];
+              for(const row of ingRows){
+                const nm = (row.querySelector("[data-ing-name]")?.value || "").trim();
+                if(!nm) continue;
+                const qty = parseQty(row.querySelector("[data-ing-qty]")?.value);
+                const unit = (row.querySelector("[data-ing-unit]")?.value || "").trim();
+                const categoryId = (row.querySelector("[data-ing-cat]")?.value || "").trim() || null;
+                const notes = (row.querySelector("[data-ing-notes]")?.value || "").trim();
+                out.push({ name: nm, nameLower: mealNorm(nm), qty, unit, categoryId, notes });
+              }
+              if(!out.length){ toast("Add at least one ingredient"); return false; }
+
+              setSync("Sync • Saving…", "warn");
+              const payload = {
+                name: mealName,
+                nameLower: mealNorm(mealName),
+                ingredients: out,
+                updatedAt: serverTimestamp(),
+                updatedByUid: state.user.uid
+              };
+              if(!isEdit){
+                payload.createdAt = serverTimestamp();
+                payload.createdByUid = state.user.uid;
+                await addDoc(collection(db, "households", state.selectedHouseholdId, "meals"), payload);
+                toast("Meal created");
+              } else {
+                await setDoc(doc(db, "households", state.selectedHouseholdId, "meals", meal.id), payload, { merge:true });
+                toast("Meal saved");
+              }
+              setSync("Sync • Up to date", "good");
+            }}
+        ]
+      });
+
+      const wrap = $("#ingWrap");
+      Array.from(wrap.querySelectorAll("[data-ing-row]")).forEach((row, i)=>{
+        const it = ingredients[i] || {};
+        const sel = row.querySelector("[data-ing-cat]");
+        if(sel) sel.value = (it.categoryId || "");
+        row.querySelector("[data-ing-del]")?.addEventListener("click", ()=>{ row.remove(); });
+      });
+
+      $("#btnAddIngRow")?.addEventListener("click", ()=>{
+        const div = document.createElement("div");
+        div.className = "card";
+        div.style.padding = "12px";
+        div.style.margin = "10px 0";
+        div.setAttribute("data-ing-row", String(wrap.querySelectorAll("[data-ing-row]").length));
+        div.innerHTML = `
+          <div class="row" style="gap:8px; align-items:flex-end">
+            <div class="grow field" style="margin:0">
+              <label>Ingredient</label>
+              <input data-ing-name placeholder="e.g. Tomatoes" />
+            </div>
+            <button class="btn danger small" type="button" data-ing-del>×</button>
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label>Qty</label>
+              <input data-ing-qty type="number" inputmode="decimal" placeholder="e.g. 2" />
+            </div>
+            <div class="field">
+              <label>Unit</label>
+              <input data-ing-unit placeholder="e.g. cans" />
+            </div>
+            <div class="field">
+              <label>Category</label>
+              <select class="select" data-ing-cat>
+                <option value="">Uncategorised</option>
+                ${catOptions}
+              </select>
+            </div>
+            <div class="field">
+              <label>Notes</label>
+              <input data-ing-notes placeholder="optional" />
+            </div>
+          </div>
+        `;
+        div.querySelector("[data-ing-del]")?.addEventListener("click", ()=> div.remove());
+        wrap.appendChild(div);
+        div.querySelector("[data-ing-name]")?.focus?.();
+      });
+    }
+
+    function collectIngredientsForMeals(mealIds){
+      const byMeal = new Map((state.meals||[]).map(m=>[m.id, m]));
+      const ingredients = [];
+      for(const id of mealIds){
+        const meal = byMeal.get(id);
+        if(!meal) continue;
+        const ing = Array.isArray(meal.ingredients) ? meal.ingredients : [];
+        for(const it of ing){
+          const nm = (it.name || "").trim();
+          if(!nm) continue;
+          ingredients.push({
+            name: nm,
+            nameLower: mealNorm(nm),
+            qty: (it.qty===null || it.qty===undefined) ? null : Number(it.qty),
+            unit: (it.unit||"").trim(),
+            categoryId: it.categoryId || null,
+            notes: (it.notes||"").trim(),
+            sourceMealId: id
+          });
+        }
+      }
+      return ingredients;
+    }
+
+    function aggregateForPicker(raw){
+      const map = new Map();
+      for(const it of raw){
+        const key = `${it.nameLower}__${(it.unit||"").toLowerCase()}`;
+        if(!map.has(key)){
+          map.set(key, { ...it, qty: it.qty, notes: it.notes, sources: new Set([it.sourceMealId]) });
+        } else {
+          const cur = map.get(key);
+          if(cur.qty!==null && it.qty!==null && (cur.unit||"").toLowerCase() === (it.unit||"").toLowerCase()){
+            cur.qty = (Number(cur.qty)||0) + (Number(it.qty)||0);
+          }
+          if(it.notes){
+            cur.notes = cur.notes ? (cur.notes + "; " + it.notes) : it.notes;
+          }
+          cur.sources.add(it.sourceMealId);
+        }
+      }
+      return Array.from(map.values()).map(x=>({ ...x, sources: Array.from(x.sources) }));
+    }
+
+    async function ensureWeeklyListId(){
+      const weekly = (state.lists || []).find(l=>l.type==="weekly" && !l.archived) || null;
+      if(weekly) return weekly.id;
+      const ref = await addDoc(collection(db, "households", state.selectedHouseholdId, "lists"), {
+        name: "Weekly Shop",
+        type: "weekly",
+        pinned: true,
+        archived: false,
+        createdAt: serverTimestamp(),
+        createdByUid: state.user.uid,
+        updatedAt: serverTimestamp(),
+        updatedByUid: state.user.uid,
+        weekKey: isoWeekKey(new Date())
+      });
+      return ref.id;
+    }
+
+    async function openIngredientPickModal({source="meal", mealIds=[]}={}){
+      if(!guardHousehold()) return;
+
+      let ids = mealIds;
+      if(source==="week"){
+        const a = state.mealPlan?.assignments || {};
+        ids = Object.values(a).filter(v=>v && v!=="__none__");
+      }
+      ids = Array.from(new Set(ids));
+      if(!ids.length){ toast("No meals selected"); return; }
+
+      const raw = collectIngredientsForMeals(ids);
+      if(!raw.length){ toast("No ingredients found"); return; }
+
+      const items = aggregateForPicker(raw);
+      const catsMap = new Map((state.categories||[]).map(c=>[c.id, c.name]));
+      const mealMap = new Map((state.meals||[]).map(m=>[m.id, m.name||"Meal"]));
+
+      const listHtml = items.map((it)=>{
+        const qtyLine = mealIngredientLine(it);
+        const cat = it.categoryId ? (catsMap.get(it.categoryId) || "Uncategorised") : "Uncategorised";
+        const notes = it.notes ? ` • ${escapeHtml(it.notes)}` : "";
+        const sources = it.sources?.length ? ` • ${escapeHtml(it.sources.map(id=>mealMap.get(id)||"Meal").join(", "))}` : "";
+        return `
+          <div class="item" style="padding:12px" data-pick-row>
+            <label style="display:flex; gap:10px; align-items:flex-start; width:100%">
+              <input type="checkbox" data-pick-check class="pickCheck" checked />
+              <div class="grow">
+                <div class="title">${escapeHtml(it.name)}</div>
+                <div class="sub">${qtyLine ? escapeHtml(qtyLine) + " • " : ""}${escapeHtml(cat)}${notes}${sources}</div>
+              </div>
+            </label>
+          </div>`;
+      }).join("");
+
+      showModal({
+        title: "Add to Weekly Shop",
+        body: `
+          <div class="muted">Tick what you need. Duplicates will merge.</div>
+          <div class="sep"></div>
+          <div class="row" style="gap:10px; justify-content:flex-end">
+            <button class="btn secondary small" id="pickAll" type="button">Add all</button>
+            <button class="btn ghost small" id="clearAll" type="button">Clear all</button>
+          </div>
+          <div class="sep"></div>
+          <div id="pickListWrap" style="max-height:52vh; overflow:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--divider); border-radius:16px; padding:8px; background: rgba(255,255,255,.7)">
+            <div id="pickList" class="list" style="gap:8px">${listHtml}</div>
+          </div>
+        `,
+        footerButtons: [
+          { label:"Cancel", className:"btn ghost" },
+          { label:"Add selected", className:"btn primary", onClick: async ()=>{
+              const rows = Array.from($("#pickList").querySelectorAll("[data-pick-row]"));
+              const selected = [];
+              rows.forEach((row, i)=>{
+                const chk = row.querySelector("[data-pick-check]");
+                if(chk && chk.checked) selected.push(items[i]);
+              });
+              if(!selected.length){ toast("Nothing selected"); return false; }
+              await mergeIngredientsIntoWeekly(selected);
+              toast("Added ingredients to Weekly Shop");
+            }}
+        ]
+      });
+
+      $("#pickAll")?.addEventListener("click", ()=>{
+        $("#pickList").querySelectorAll("[data-pick-check]").forEach(c=>c.checked = true);
+      });
+      $("#clearAll")?.addEventListener("click", ()=>{
+        $("#pickList").querySelectorAll("[data-pick-check]").forEach(c=>c.checked = false);
+      });
+    }
+
+    async function mergeIngredientsIntoWeekly(ings){
+      if(!guardHousehold()) return;
+      setSync("Sync • Adding…", "warn");
+
+      const listId = await ensureWeeklyListId();
+      const itemsCol = collection(db, "households", state.selectedHouseholdId, "lists", listId, "items");
+
+      const snap = await getDocs(query(itemsCol));
+      const mealNameMap = new Map((state.meals||[]).map(m=>[m.id, m.name||"Meal"]));
+      const existing = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+      const map = new Map();
+      existing.forEach(it=>{
+        const key = mealNorm(it.name);
+        if(key) map.set(key, it);
+      });
+
+      for(const ing of ings){
+        const key = mealNorm(ing.name);
+        if(!key) continue;
+        const ex = map.get(key) || null;
+
+        const ingQty = (ing.qty===null || ing.qty===undefined) ? null : Number(ing.qty);
+        const ingUnit = (ing.unit||"").trim();
+        const ingCat = ing.categoryId || null;
+        const ingNotes = (ing.notes||"").trim();
+
+        if(ex){
+          const exQty = (ex.qty===null || ex.qty===undefined) ? null : Number(ex.qty);
+          const exUnit = (ex.unit||"").trim();
+
+          const updates = { updatedAt: serverTimestamp(), updatedByUid: state.user.uid };
+
+          // Meal tags (for reporting/clarity)
+          const newTags = (ing.sources||[]).map(id=>mealNameMap.get(id)||"Meal");
+          const prevTags = Array.isArray(ex.mealTags) ? ex.mealTags : [];
+          const mergedTags = Array.from(new Set(prevTags.concat(newTags))).filter(Boolean);
+          if(mergedTags.length) updates.mealTags = mergedTags;
+
+          if(exQty!==null && ingQty!==null && exUnit && ingUnit && exUnit.toLowerCase()===ingUnit.toLowerCase()){
+            updates.qty = exQty + ingQty;
+          } else if(exQty===null && ingQty!==null && (!exUnit || exUnit.toLowerCase()===ingUnit.toLowerCase())){
+            updates.qty = ingQty;
+            if(ingUnit && !exUnit) updates.unit = ingUnit;
+          } else if(ingQty!==null || ingNotes){
+            const needed = ingQty!==null ? `${ingQty}${ingUnit ? " "+ingUnit : ""}` : "";
+            const extra = needed ? `Needed: ${needed}` : "";
+            const toAppend = [extra, ingNotes].filter(Boolean).join(extra && ingNotes ? " — " : "");
+            if(toAppend){
+              const prev = (ex.notes || "").trim();
+              updates.notes = prev ? (prev + "; " + toAppend) : toAppend;
+            }
+          }
+
+          if(ingCat && !ex.categoryId){
+            updates.categoryId = ingCat;
+          }
+
+          await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", listId, "items", ex.id), updates);
+
+        } else {
+          const payload = {
+            name: ing.name,
+            categoryId: ingCat,
+            qty: (ingQty!==null && Number.isFinite(ingQty)) ? ingQty : null,
+            unit: ingUnit,
+            notes: ingNotes,
+            mealTags: Array.from(new Set((ing.sources||[]).map(id=>mealNameMap.get(id)||"Meal"))).filter(Boolean),
+            picked: false,
+            pickedAt: null,
+            priceEach: null,
+            costTotal: null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            addedByUid: state.user.uid,
+            updatedByUid: state.user.uid
+          };
+          const ref = await addDoc(itemsCol, payload);
+          map.set(key, { id: ref.id, ...payload });
+        }
+      }
+
+      setSync("Sync • Up to date", "good");
+    }
+
+
 // === ISO week helpers + Weekly reset flow ===
 function isoWeekKey(d){
   // Returns YYYY-Www (ISO week date)
@@ -1761,6 +2487,33 @@ function isoWeekKey(d){
   const ww = String(weekNo).padStart(2, "0");
   return `${yyyy}-W${ww}`;
 }
+    
+    function isoWeekMonday(weekKey){
+      // weekKey like "2026-W05"
+      const m = String(weekKey||"").match(/^(\d{4})-W(\d{2})$/);
+      if(!m) return null;
+      const year = Number(m[1]);
+      const week = Number(m[2]);
+      // ISO week 1 is the week with Jan 4th
+      const jan4 = new Date(Date.UTC(year, 0, 4));
+      const day = jan4.getUTCDay() || 7; // Mon=1..Sun=7
+      const mon1 = new Date(jan4);
+      mon1.setUTCDate(jan4.getUTCDate() - (day - 1));
+      const mon = new Date(mon1);
+      mon.setUTCDate(mon1.getUTCDate() + (week - 1) * 7);
+      // Return local Date (date-only) to avoid DST drift in rendering
+      return new Date(mon.getUTCFullYear(), mon.getUTCMonth(), mon.getUTCDate());
+    }
+
+    function fmtWcDate(d){
+      if(!d) return "—";
+      const dd = String(d.getDate()).padStart(2,"0");
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const mm = months[d.getMonth()] || "";
+      const yy = d.getFullYear();
+      return `W/C ${dd} ${mm} ${yy}`;
+    }
+
 function localDateKey(d){
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth()+1).padStart(2,"0");
