@@ -381,6 +381,17 @@
       white-space: nowrap;
     }
     .mealTagWrap{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+
+    /* Meals library layout (mobile-friendly) */
+    .mealItem{ flex-wrap:wrap; align-items:flex-start; gap:10px; }
+    .mealItem .grow{ min-width: 160px; }
+    .mealActions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; flex-wrap:wrap; }
+    .mealActions .btn, .mealActions .iconBtn{ flex:0 0 auto; }
+    @media (max-width: 420px){
+      .mealItem .grow{ flex: 1 1 100%; }
+      .mealActions{ width:100%; justify-content:flex-start; }
+    }
+
 </style>
 </head>
 <body>
@@ -423,8 +434,8 @@
           <div class="sep"></div>
           <div class="row wrap">
             <button class="btn primary" id="btnNewList" type="button">New list</button>
-            <button class="btn secondary" id="btnToggleArchivedLists" type="button">Show archived</button>
-            <button class="btn ghost" id="btnOpenWeekly" type="button">Open Weekly shop</button>
+            <button class="btn secondary" id="btnOpenWeekly" type="button">Start Your Weekly shop</button>
+            <button class="btn ghost" id="btnToggleArchivedLists" type="button">Show archived</button>
           </div>
         </div>
       </section>
@@ -470,7 +481,7 @@
               <div class="muted">Evening meals (Mon–Sun), planned ahead.</div>
             </div>
             <div class="row" style="gap:8px; align-items:center; justify-content:flex-end">
-              <button class="btn ghost small" id="btnTogglePlanner" type="button" aria-label="Minimise planner">–</button>
+              <button class="btn danger small" id="btnTogglePlanner" type="button" aria-label="Minimise planner">–</button>
               <div class="badge" id="mealsWeekKey">—</div>
             </div>
           </div>
@@ -484,7 +495,7 @@
             <div class="sep"></div>
             <div class="row" style="gap:10px; justify-content:flex-end">
               <button class="btn secondary" id="btnClearWeek" type="button">Clear week</button>
-              <button class="btn primary" id="btnAddWeekToShop" type="button">Add ingredients to Weekly Shop</button>
+              <button class="btn primary" id="btnAddWeekToShop" type="button">Add Weekly Shop</button>
             </div>
           
           </div>
@@ -585,9 +596,9 @@
               <div id="tplWrap" class="list" style="display:none"></div>
               <div class="sep"></div>
               <div class="row wrap">
-                <button class="btn primary" id="btnAddTplItem" type="button">Add template item</button>
-                <button class="btn warn" id="btnResetWeeklyNow" type="button">Reset Weekly Shop</button>
-                <button class="btn secondary" id="btnTestWeeklyPrompt" type="button">Test Monday reset prompt</button>
+                <button class="btn primary" id="btnAddTplItem" type="button">Add Template Item</button>
+                <button class="btn secondary" id="btnResetWeeklyNow" type="button">Reset Weekly Shop</button>
+                <button class="btn ghost" id="btnTestWeeklyPrompt" type="button">Test Monday Reset Prompt</button>
               </div>
             </div>
           </div>
@@ -671,7 +682,7 @@
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import {
       getFirestore, doc, getDoc, setDoc, addDoc, collection, serverTimestamp,
-      onSnapshot, query, orderBy, where, limit, getDocs, writeBatch, updateDoc, deleteDoc
+      onSnapshot, query, orderBy, where, limit, getDocs, writeBatch, updateDoc, deleteDoc, deleteField
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
     // === Firebase config (provided by Rich) ===
@@ -1981,7 +1992,7 @@ function openListSettings(list){
           <div class="grow">
             <select class="select" data-day="${key}">${opts}</select>
           </div>
-          <button class="btn ghost small" type="button" data-clear data-day="${key}" aria-label="Clear day">×</button>
+          <button class="btn danger small" type="button" data-clear data-day="${key}" aria-label="Clear day">×</button>
         `;
         const clearBtn = row.querySelector("button[data-clear]");
         if(clearBtn){ clearBtn.dataset.day = key; clearBtn.addEventListener("click", async (e)=>{ e.preventDefault(); e.stopPropagation(); await setMealForDay(key, ""); }); }
@@ -2013,15 +2024,15 @@ function openListSettings(list){
         for(const meal of list){
           const ing = Array.isArray(meal.ingredients) ? meal.ingredients : [];
           const el = document.createElement("div");
-          el.className = "item";
+          el.className = "item mealItem";
           el.innerHTML = `
             <div class="grow">
               <div class="title">${escapeHtml(meal.name || "Meal")}</div>
               <div class="sub">${ing.length} ingredient${ing.length===1?"":"s"}</div>
             </div>
-            <div class="row" style="gap:8px; justify-content:flex-end; align-items:center">
-              <button class="btn secondary small" type="button" data-add-week>Add to week</button>
-              <button class="btn primary small" type="button" data-add-shop>Add ingredients</button>
+            <div class="row mealActions">
+              <button class="iconBtn" type="button" data-add-week aria-label="Add to week"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h1V3a1 1 0 0 1 1-1Zm12 8H5v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9ZM6 6a1 1 0 0 0-1 1v1h14V7a1 1 0 0 0-1-1H6Z"/></svg></button>
+              <button class="btn primary small" type="button" data-add-shop>Add to list</button>
               <button class="iconBtn" type="button" data-edit aria-label="Edit">✎</button>
               <button class="iconBtn danger" type="button" data-del aria-label="Delete">×</button>
             </div>
@@ -2077,14 +2088,39 @@ function openListSettings(list){
       renderMeals();
 
       setSync("Sync • Saving…", "warn");
-      await setDoc(ref, {
-        weekKey: wk,
-        assignments: next,
-        updatedAt: serverTimestamp(),
-        updatedByUid: state.user.uid
-      }, { merge:true });
+      try{
+        if(mealId){
+          await updateDoc(ref, {
+            weekKey: wk,
+            [`assignments.${String(dayKey)}`]: mealId,
+            updatedAt: serverTimestamp(),
+            updatedByUid: state.user.uid
+          });
+        } else {
+          await updateDoc(ref, {
+            weekKey: wk,
+            [`assignments.${String(dayKey)}`]: deleteField(),
+            updatedAt: serverTimestamp(),
+            updatedByUid: state.user.uid
+          });
+        }
+      } catch(err){
+        const msg = String(err||"");
+        const code = err?.code || "";
+        if(code === "not-found" || msg.includes("No document to update")){
+          // First write for this week plan (create doc)
+          await setDoc(ref, {
+            weekKey: wk,
+            assignments: next,
+            updatedAt: serverTimestamp(),
+            updatedByUid: state.user.uid
+          });
+        } else {
+          throw err;
+        }
+      }
       setSync("Sync • Up to date", "good");
-    }
+}
 
 function openPickDayModal(mealId){
       const days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
