@@ -525,11 +525,53 @@
 
       <!-- SHOP -->
       <section id="panel-shop" class="panel">
-        <div class="card">
+        <div id="shopEmpty" class="card">
           <div class="h1">Shop</div>
-          <div class="muted">Tick items off as you go. Capture cost and quantity to build your basket total.</div>
+          <div class="muted">Start a shop session to tick items off in-store, capture costs, and build a basket total.</div>
           <div class="sep"></div>
-          <div class="muted">Coming next: shopping mode grouped by category + running basket total.</div>
+          <div class="muted">Select a list in the Lists tab to begin.</div>
+        </div>
+
+        <div id="shopWrap" style="display:none">
+          <div class="card">
+            <div class="row between">
+              <div>
+                <div class="h1">Shopping mode</div>
+                <div class="muted">List: <span id="shopCurrentList">—</span></div>
+              </div>
+              <div class="pill" id="shopStatusPill">Not started</div>
+            </div>
+
+            <div class="sep"></div>
+
+            <div class="grid2">
+              <div class="card" style="padding:10px">
+                <div class="muted" style="font-weight:800">Basket total</div>
+                <div class="h1" id="shopBasketTotal" style="margin-top:4px">£0.00</div>
+                <div class="muted" id="shopUnpriced" style="margin-top:2px"></div>
+              </div>
+              <div class="card" style="padding:10px">
+                <div class="muted" style="font-weight:800">Shop time</div>
+                <div class="h1" id="shopTimer" style="margin-top:4px">00:00:00</div>
+                <div class="muted" id="shopStartedAt" style="margin-top:2px"></div>
+              </div>
+            </div>
+
+            <div class="sep"></div>
+
+            <div class="row gap" style="flex-wrap:wrap">
+              <button class="btn primary" id="btnStartShop" type="button">Start shop</button>
+              <button class="btn primary" id="btnCompleteShop" type="button" style="display:none">Complete shop</button>
+              <button class="btn danger" id="btnResetShop" type="button" style="display:none">Reset shop</button>
+              <button class="btn secondary" id="btnQuickAddShop" type="button">Quick add</button>
+              <button class="btn ghost" id="btnShopTogglePicked" type="button">Show picked</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div id="shopItemsEmpty" class="muted">No items to shop. Add items in Build.</div>
+            <div id="shopItemsWrap" class="list" style="display:none"></div>
+          </div>
         </div>
       </section>
 
@@ -682,7 +724,7 @@
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import {
       getFirestore, doc, getDoc, setDoc, addDoc, collection, serverTimestamp,
-      onSnapshot, query, orderBy, where, limit, getDocs, writeBatch, updateDoc, deleteDoc, deleteField, documentId
+      onSnapshot, query, orderBy, where, limit, getDocs, writeBatch, updateDoc, deleteDoc, deleteField, documentId, arrayUnion
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
     // === Firebase config (provided by Rich) ===
@@ -708,6 +750,32 @@
     const syncText = $("#syncText");
     const ctxHousehold = $("#ctxHousehold");
     const ctxList = $("#ctxList");
+
+    // Quick switchers (header context)
+    try{
+      const houseCard = ctxHousehold?.closest(".context-card");
+      if(houseCard){
+        houseCard.style.cursor = "pointer";
+        houseCard.title = "Switch household";
+        houseCard.addEventListener("click", ()=> openHouseholdPicker());
+      }else{
+        ctxHousehold.style.cursor = "pointer";
+        ctxHousehold.title = "Switch household";
+        ctxHousehold.addEventListener("click", ()=> openHouseholdPicker());
+      }
+    }catch{}
+    try{
+      const listCard = ctxList?.closest(".context-card");
+      if(listCard){
+        listCard.style.cursor = "pointer";
+        listCard.title = "Switch list";
+        listCard.addEventListener("click", ()=> openListPicker());
+      }else{
+        ctxList.style.cursor = "pointer";
+        ctxList.title = "Switch list";
+        ctxList.addEventListener("click", ()=> openListPicker());
+      }
+    }catch{}
 
     function setSync(text, kind="warn"){
       syncText.textContent = text;
@@ -788,7 +856,25 @@
       }
     }
 
-    async function confirmModal({title="Confirm", message="", confirmLabel="OK", cancelLabel="Cancel", confirmClass="primary", cancelClass="ghost"}={}){
+    
+    async function showChoiceModal({title, message, options=[], cancelLabel="Cancel"}){
+      return new Promise((resolve)=>{
+        showModal({
+          title,
+          body: `<div class="muted" style="line-height:1.35">${escapeHtml(message||"")}</div>`,
+          footerButtons: [
+            { label: cancelLabel, className: "ghost", onClick: ()=>{ resolve(null); } },
+            ...options.map(o=>({
+              label: o.label,
+              className: o.className || "secondary",
+              onClick: ()=>{ resolve(o.key); }
+            }))
+          ]
+        });
+      });
+    }
+
+async function confirmModal({title="Confirm", message="", confirmLabel="OK", cancelLabel="Cancel", confirmClass="primary", cancelClass="ghost"}={}){
       return new Promise((resolve)=>{
         let done = false;
         const safeResolve = (v)=>{ if(done) return; done = true; resolve(v); };
@@ -812,7 +898,9 @@
       $$(".panel").forEach(p=>p.classList.remove("active"));
       $("#panel-"+name).classList.add("active");
       if(name==="build") renderBuild();
+        try{ renderShop(); }catch{}
       if(name==="meals"){ attachMealsListeners(); renderMeals(); }
+      if(name==="shop"){ renderShop(); }
     }
     $$(".tab").forEach(t=> t.addEventListener("click", ()=> setTab(t.dataset.tab)));
 
@@ -840,7 +928,10 @@
       mealsWeekKey: null,
       items: [],
       showPicked: false,
-      lastFocusEl: null,
+            shopShowPicked: (localStorage.getItem("bb.shopShowPicked")==="1"),
+      activeShop: null,
+      shopTick: null,
+lastFocusEl: null,
       showArchivedLists: (localStorage.getItem("bb.showArchivedLists")==="1")
     };
 
@@ -859,7 +950,40 @@
       setCtx();
       try{ renderLists(); }catch{}
       try{ attachItemsListener(); }catch{}
+      try{ renderBuild(); }catch{}
+      try{ renderShop(); }catch{}
+      try{ renderMeals(); }catch{}
     }
+    function openHouseholdPicker(){
+      if(!state.user) return;
+      const items = (state.households || []).slice().sort((a,b)=>String(a.householdName||"").localeCompare(String(b.householdName||"")));
+      const body = document.createElement("div");
+      body.className = "list";
+      for(const h of items){
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `<div class="grow"><div class="title">${escapeHtml(h.householdName||"Household")}</div><div class="sub">${escapeHtml(h.role||"member")}</div></div>`;
+        row.addEventListener("click", ()=>{ hideModal(); selectHousehold(h.householdId); });
+        body.appendChild(row);
+      }
+      showModal({ title:"Switch household", body, footerButtons:[{label:"Close", className:"ghost"}] });
+    }
+
+    function openListPicker(){
+      const lists = (state.lists || []).filter(l=>!l.archived);
+      const body = document.createElement("div");
+      body.className = "list";
+      for(const l of lists){
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `<div class="grow"><div class="title">${escapeHtml(l.name || (l.type==="weekly"?"Weekly shop":"List"))}</div><div class="sub">${l.type==="weekly"?"Weekly":"Custom"}</div></div>`;
+        row.addEventListener("click", ()=>{ hideModal(); setCurrentListId(l.id); });
+        body.appendChild(row);
+      }
+      showModal({ title:"Switch list", body, footerButtons:[{label:"Close", className:"ghost"}] });
+    }
+
+
 
     // === Auth UI ===
     const signedOutBlock = $("#signedOutBlock");
@@ -1083,7 +1207,9 @@ state.unsubConfig = onSnapshot(doc(db, "households", hid, "settings", "config"),
 });
 
 // Weekly reset check (Monday morning) after initial data is available
-scheduleWeeklyResetCheck();
+await loadActiveShopIfAny();
+  try{ renderShop(); }catch{}
+  scheduleWeeklyResetCheck();
     }
 
     function cleanupHouseholdSubs(){
@@ -1118,6 +1244,8 @@ scheduleWeeklyResetCheck();
       state.unsubItems = onSnapshot(qy, (snap)=>{
         state.items = snap.docs.map(d=>({ id:d.id, ...d.data() }));
         renderBuild();
+        try{ renderShop(); }catch{}
+        try{ renderShopHeaderOnly(); }catch{}
       }, (err)=>{
         console.error(err);
         toast("Couldn’t load items (permissions)", {ms:3200});
@@ -1141,7 +1269,638 @@ scheduleWeeklyResetCheck();
       return `${qn} ${u}`;
     }
 
-    function renderMealTags(it){
+    
+    // === Shop tab (shopping mode) ===
+    function money(n){
+      const v = Number(n);
+      if(!Number.isFinite(v)) return "£0.00";
+      return new Intl.NumberFormat("en-GB", {style:"currency", currency:"GBP"}).format(v);
+    }
+    function pad2(n){ return String(n).padStart(2,"0"); }
+    function fmtHMS(totalSeconds){
+      const s = Math.max(0, Math.floor(totalSeconds||0));
+      const h = Math.floor(s/3600);
+      const m = Math.floor((s%3600)/60);
+      const ss = s%60;
+      return `${pad2(h)}:${pad2(m)}:${pad2(ss)}`;
+    }
+
+    function getActiveShopKey(){
+      return localStorage.getItem("bb.activeShopKey") || null;
+    }
+    function setActiveShopKey(key){
+      if(key) localStorage.setItem("bb.activeShopKey", key);
+      else localStorage.removeItem("bb.activeShopKey");
+    }
+
+    function getActiveShop(){
+      return state.activeShop;
+    }
+
+    async function loadActiveShopIfAny(){
+      state.activeShop = null;
+      const key = getActiveShopKey();
+      if(!key || !state.selectedHouseholdId) return;
+      // key format: {householdId}:{listId}:{shopId}:{startedAtMs}
+      const parts = key.split(":");
+      if(parts.length < 4) { setActiveShopKey(null); return; }
+      const [hid, listId, shopId, startedMs] = parts;
+      if(hid !== state.selectedHouseholdId) return;
+      state.activeShop = { householdId: hid, listId, shopId, startedAtMs: Number(startedMs)||Date.now(), excludedIds: [] };
+      try{
+        const snap = await getDoc(doc(db, "households", hid, "shops", shopId));
+        if(snap.exists()){
+          const d = snap.data() || {};
+          if(d.status && d.status !== "active"){
+            state.activeShop = null;
+            setActiveShopKey(null);
+          }else{
+            if(Number.isFinite(Number(d.startedAtMs))) state.activeShop.startedAtMs = Number(d.startedAtMs);
+            if(Array.isArray(d.excludedIds)) state.activeShop.excludedIds = d.excludedIds.slice();
+          }
+        }
+      }catch(e){
+        console.warn("Active shop load failed", e);
+      }
+    }
+
+    function computeBasket(){
+      const items = state.items || [];
+      let total = 0;
+      let unpriced = 0;
+      for(const it of items){
+        if(!it.picked) continue;
+        const c = Number(it.pickedCost);
+        if(Number.isFinite(c)) total += c;
+        else unpriced += 1;
+      }
+      return { total, unpriced };
+    }
+
+    function ensureShopTimer(){
+      if(state.shopTick) return;
+      state.shopTick = setInterval(()=>{ try{ renderShopHeaderOnly(); }catch{} }, 1000);
+    }
+
+    function clearShopTimer(){
+      if(state.shopTick){ clearInterval(state.shopTick); state.shopTick = null; }
+    }
+
+    function renderShopHeaderOnly(){
+      const wrap = $("#shopWrap");
+      if(!wrap || wrap.style.display==="none") return;
+
+      const cur = getCurrentList();
+      const shop = getActiveShop();
+      const startBtn = $("#btnStartShop");
+      const completeBtn = $("#btnCompleteShop");
+      const resetBtn = $("#btnResetShop");
+      const pill = $("#shopStatusPill");
+
+      if(cur) $("#shopCurrentList").textContent = cur.name || (cur.type==="weekly" ? "Weekly shop" : "List");
+
+      const { total, unpriced } = computeBasket();
+      $("#shopBasketTotal").textContent = money(total);
+      $("#shopUnpriced").textContent = unpriced ? `${unpriced} picked item${unpriced===1?"":"s"} without a cost` : "";
+
+      if(shop && cur && shop.listId === cur.id){
+        const elapsed = (Date.now() - (shop.startedAtMs||Date.now()))/1000;
+        $("#shopTimer").textContent = fmtHMS(elapsed);
+        $("#shopStartedAt").textContent = "In progress";
+        pill.textContent = "In progress";
+        pill.classList.remove("good");
+        pill.classList.add("warn");
+        startBtn.style.display = "none";
+        completeBtn.style.display = "";
+        if(resetBtn) resetBtn.style.display = "";
+        ensureShopTimer();
+      }else{
+        $("#shopTimer").textContent = "00:00:00";
+        $("#shopStartedAt").textContent = "";
+        pill.textContent = "Not started";
+        pill.classList.remove("warn");
+        startBtn.style.display = "";
+        completeBtn.style.display = "none";
+        if(resetBtn) resetBtn.style.display = "none";
+        clearShopTimer();
+      }
+    }
+
+    function renderShop(){
+      const empty = $("#shopEmpty");
+      const wrap = $("#shopWrap");
+      const itemsEmpty = $("#shopItemsEmpty");
+      const itemsWrap = $("#shopItemsWrap");
+      const toggleBtn = $("#btnShopTogglePicked");
+
+      if(!state.user || !state.selectedHouseholdId){
+        empty.style.display = "block";
+        wrap.style.display = "none";
+        return;
+      }
+      const cur = getCurrentList();
+      if(!cur){
+        empty.style.display = "block";
+        const msgEl = empty.querySelector(".muted:last-child");
+        if(msgEl) msgEl.textContent = "Select a list in the Lists tab to begin.";
+        wrap.style.display = "none";
+        return;
+      }
+
+      empty.style.display = "none";
+      wrap.style.display = "block";
+
+      if(toggleBtn){
+        toggleBtn.textContent = state.shopShowPicked ? "Hide picked" : "Show picked";
+      }
+
+      renderShopHeaderOnly();
+
+      const shop = getActiveShop();
+      const excluded = new Set((shop && Array.isArray(shop.excludedIds)) ? shop.excludedIds : []);
+      const visible = (state.items || []).filter(it=>{
+        if(excluded.has(it.id)) return false;
+        return state.shopShowPicked ? true : !it.picked;
+      });
+      itemsWrap.innerHTML = "";
+
+      if(!visible.length){
+        itemsEmpty.style.display = "block";
+        itemsWrap.style.display = "none";
+        itemsEmpty.textContent = state.shopShowPicked ? "No items yet." : "No unpicked items — toggle to show picked, or add more.";
+        return;
+      }
+
+      itemsEmpty.style.display = "none";
+      itemsWrap.style.display = "flex";
+
+      // Group by category, uncategorised last
+      const groups = new Map();
+      for(const it of visible){
+        const key = it.categoryId || "__uncat__";
+        if(!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(it);
+      }
+      const order = (state.categories || []).map(c=>c.id).filter(id=>groups.has(id));
+      if(groups.has("__uncat__")) order.push("__uncat__");
+
+      for(const catId of order){
+        const header = document.createElement("div");
+        header.className = "muted";
+        header.style.margin = "10px 2px 6px";
+        header.style.fontWeight = "800";
+        header.textContent = catId==="__uncat__" ? "Uncategorised" : categoryLabel(catId);
+        itemsWrap.appendChild(header);
+
+        for(const it of groups.get(catId)){
+          const row = document.createElement("div");
+          row.className = "item" + (it.picked ? " picked" : "");
+          const qtyTxt = fmtQty(it);
+          const costTxt = Number.isFinite(Number(it.pickedCost)) ? ` • ${money(it.pickedCost)}` : (it.picked ? " • £—" : "");
+          const pickedQtyTxt = it.picked && Number.isFinite(Number(it.pickedQty)) ? ` • Qty ${Number(it.pickedQty)}` : "";
+          row.innerHTML = `
+            <div class="grow">
+              <div class="title">${escapeHtml(it.name || "Item")}</div>
+              ${renderMealTags(it)}
+              <div class="sub">${qtyTxt ? escapeHtml(qtyTxt) + " • " : ""}${escapeHtml(categoryLabel(it.categoryId))}${it.notes ? " • " + escapeHtml(it.notes) : ""}${it.picked ? " • Picked" + pickedQtyTxt + costTxt : ""}</div>
+            </div>
+            <button class="btn secondary small" type="button" data-toggle>${it.picked ? "Unpick" : "Pick"}</button>
+            ${it.picked ? `<button class="btn ghost small" type="button" data-edit title="Edit quantity/cost">✎</button>` : ``}
+            <button class="btn ghost small" type="button" data-skip>Skip</button>
+          `;
+
+          row.querySelector("[data-toggle]")?.addEventListener("click", async (e)=>{
+            e.stopPropagation();
+            const cur = getCurrentList();
+            if(!cur) return;
+
+            let shop = getActiveShop();
+            if(!shop || shop.listId !== cur.id){
+              const ok = await confirmModal({
+                title: "Start shopping session?",
+                message: "You need an active shopping session to pick items. Start now and pick this item?",
+                confirmLabel: "Start shop & pick",
+                confirmClass: "primary",
+                cancelLabel: "Cancel"
+              });
+              if(!ok) return;
+              await startShopSession({ skipConfirm: true });
+              shop = getActiveShop();
+              if(!shop || shop.listId !== cur.id) return;
+            }
+
+            if(!it.picked){
+              await openShopPickModal(it);
+            }else{
+              setSync("Sync • Saving…", "warn");
+              await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", cur.id, "items", it.id), {
+                picked: false,
+                pickedAt: null,
+                pickedQty: null,
+                pickedCost: null,
+                updatedAt: serverTimestamp(),
+                updatedByUid: state.user.uid
+              });
+              try{
+                const idx = (state.items||[]).findIndex(x=>x.id===it.id);
+                if(idx>=0){
+                  state.items[idx] = { ...state.items[idx], picked:false, pickedAt:null, pickedQty:null, pickedCost:null };
+                }
+              }catch{}
+              setSync("Sync • Up to date", "good");
+              try{ renderShop(); }catch{}
+              try{ renderBuild(); }catch{}
+            }
+          });
+
+          
+          row.querySelector("[data-edit]")?.addEventListener("click", async (e)=>{
+            e.stopPropagation();
+            const cur = getCurrentList();
+            if(!cur) return;
+
+            let shop = getActiveShop();
+            if(!shop || shop.listId !== cur.id){
+              const ok = await confirmModal({
+                title: "Start shopping session?",
+                message: "Start a shopping session to edit picked quantity/cost for this item?",
+                confirmLabel: "Start shop",
+                confirmClass: "primary",
+                cancelLabel: "Cancel"
+              });
+              if(!ok) return;
+              await startShopSession({ skipConfirm: true });
+              shop = getActiveShop();
+              if(!shop || shop.listId !== cur.id) return;
+            }
+            await openShopPickModal(it, { mode: "edit" });
+          });
+row.querySelector("[data-skip]")?.addEventListener("click", async (e)=>{
+            e.stopPropagation();
+            const cur = getCurrentList();
+            if(!cur) return;
+            const shop = getActiveShop();
+            if(!shop || shop.listId !== cur.id){ toast("Start shop first"); return; }
+
+            const choice = await showChoiceModal({
+              title: "Skip item",
+              message: "Mark this item as not needed or unavailable for this shop. It will be removed from this shopping session, but remain on your list.",
+              options: [
+                { key: "not_needed", label: "Not needed", className: "secondary" },
+                { key: "unavailable", label: "Unavailable", className: "danger" }
+              ],
+              cancelLabel: "Cancel"
+            });
+            if(!choice) return;
+
+            setSync("Sync • Saving…", "warn");
+            const batch = writeBatch(db);
+            const shopRef = doc(db, "households", state.selectedHouseholdId, "shops", shop.shopId);
+            const meta = { reason: choice, atMs: Date.now(), byUid: state.user.uid };
+            batch.update(shopRef, {
+              excludedIds: arrayUnion(it.id),
+              [`excluded.${it.id}`]: meta,
+              updatedAt: serverTimestamp()
+            });
+
+            const itemRef = doc(db, "households", state.selectedHouseholdId, "lists", cur.id, "items", it.id);
+            batch.update(itemRef, {
+              picked: false,
+              pickedAt: null,
+              pickedQty: null,
+              pickedCost: null,
+              updatedAt: serverTimestamp(),
+              updatedByUid: state.user.uid
+            });
+
+            await batch.commit();
+
+            if(!Array.isArray(shop.excludedIds)) shop.excludedIds = [];
+            if(!shop.excludedIds.includes(it.id)) shop.excludedIds.push(it.id);
+
+            const idx = (state.items||[]).findIndex(x=>x.id===it.id);
+            if(idx>=0){
+              state.items[idx] = { ...state.items[idx], picked:false, pickedAt:null, pickedQty:null, pickedCost:null };
+            }
+
+            setSync("Sync • Up to date", "good");
+            renderShop();
+            try{ renderBuild(); }catch{}
+          });
+
+          itemsWrap.appendChild(row);
+        }
+      }
+    }
+
+    async function openShopPickModal(it, opts={}){
+      const cur = getCurrentList();
+      if(!cur) return;
+      const qtyDefault = (it.picked && Number.isFinite(Number(it.pickedQty))) ? Number(it.pickedQty) : (Number.isFinite(Number(it.qty)) ? Number(it.qty) : 1);
+      const costDefault = (it.picked && Number.isFinite(Number(it.pickedCost))) ? Number(it.pickedCost) : null;
+      const skipDefault = it.picked && (it.pickedCost===null || it.pickedCost===undefined);
+
+      const cats = (state.categories||[]).slice();
+      const catOptions = [`<option value="">Uncategorised</option>`]
+        .concat(cats.map(c=>`<option value="${c.id}" ${c.id===it.categoryId ? "selected":""}>${escapeHtml(c.name)}</option>`))
+        .join("");
+
+      showModal({
+        title: (opts.mode==="edit" ? "Edit picked item" : "Pick item"),
+        body: `
+          <div style="max-height:70vh; overflow:auto">
+          <div class="field"><label>Item</label><div style="font-weight:900">${escapeHtml(it.name||"Item")}</div></div>
+          <div class="grid2">
+            <div class="field"><label>Quantity picked</label><input id="spQty" type="number" inputmode="decimal" value="${escapeHtml(String(qtyDefault))}" /></div>
+            <div class="field"><label>Cost (£)</label><input id="spCost" type="number" inputmode="decimal" placeholder="e.g. 2.50" value="${costDefault!=null ? escapeHtml(String(costDefault)) : ""}" /></div>
+          </div>
+          <div class="field"><label>Category</label><select id="spCat">${catOptions}</select></div>
+          <div class="row gap" style="margin-top:6px">
+            <label class="muted" style="display:flex;align-items:center;gap:8px">
+              <input id="spSkip" type="checkbox" ${skipDefault ? "checked" : ""} />
+              Skip cost for now
+            </label>
+          </div>
+          </div>
+        `,
+        footerButtons: [
+          { label: "Cancel", className: "ghost" },
+          {
+            label: "Save",
+            className: "primary",
+            onClick: async ()=>{
+              const qty = Number($("#spQty").value);
+              const skip = $("#spSkip").checked;
+              const cost = skip ? null : Number($("#spCost").value);
+              const catId = ($("#spCat").value || "") || null;
+
+              setSync("Sync • Saving…", "warn");
+              await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", cur.id, "items", it.id), {
+                picked: true,
+                pickedAt: serverTimestamp(),
+                pickedQty: Number.isFinite(qty) ? qty : null,
+                pickedCost: (!skip && Number.isFinite(cost)) ? cost : null,
+                categoryId: catId,
+                updatedAt: serverTimestamp(),
+                updatedByUid: state.user.uid
+              });
+              try{
+                const idx = (state.items||[]).findIndex(x=>x.id===it.id);
+                if(idx>=0){
+                  state.items[idx] = { ...state.items[idx], picked:true, pickedQty: Number.isFinite(qty)?qty:null, pickedCost: (!skip && Number.isFinite(cost))?cost:null, categoryId: catId };
+                }
+              }catch{}
+              setSync("Sync • Up to date", "good");
+              try{ renderShop(); }catch{}
+              try{ renderBuild(); }catch{}
+            }
+          }
+        ]
+      });
+      setTimeout(()=>{ try{ $("#spCost").focus(); }catch{} }, 80);
+    }
+
+    async function startShopSession(opts={}){
+      if(!guardHousehold()) return;
+      const cur = getCurrentList();
+      if(!cur){ toast("Select a list first"); return; }
+
+      const existing = getActiveShop();
+      if(existing && existing.listId === cur.id){
+        toast("Shop already in progress");
+        return;
+      }
+
+      if(!opts.skipConfirm){
+        const ok = await confirmModal({
+          title: "Start shop?",
+          message: "This begins shopping mode for this list. You can pick items, capture costs, and then complete the shop to save it for reports.",
+          confirmLabel: "Start shop",
+          confirmClass: "primary",
+          cancelLabel: "Cancel"
+        });
+        if(!ok) return;
+      }
+
+      const startedAtMs = Date.now();
+      const shopsCol = collection(db, "households", state.selectedHouseholdId, "shops");
+      const itemsSnap = (state.items || []).map(x=>({
+        id: x.id,
+        name: x.name || "",
+        qty: x.qty ?? null,
+        unit: x.unit || "",
+        notes: x.notes || "",
+        categoryId: x.categoryId || null,
+        mealTags: Array.isArray(x.mealTags) ? x.mealTags : [],
+        picked: !!x.picked
+      }));
+
+      const shopDoc = await addDoc(shopsCol, {
+        status: "active",
+        listId: cur.id,
+        listName: cur.name || "",
+        startedAt: serverTimestamp(),
+        startedAtMs,
+        startedByUid: state.user.uid,
+        itemsStart: itemsSnap,
+        createdAt: serverTimestamp()
+      });
+
+      state.activeShop = { householdId: state.selectedHouseholdId, listId: cur.id, shopId: shopDoc.id, startedAtMs, excludedIds: [] };
+      setActiveShopKey(`${state.selectedHouseholdId}:${cur.id}:${shopDoc.id}:${startedAtMs}`);
+      toast("Shop started");
+      renderShop();
+    }
+
+    async function completeShopSession(){
+      if(!guardHousehold()) return;
+      const cur = getCurrentList();
+      const shop = getActiveShop();
+      if(!cur || !shop || shop.listId !== cur.id){ toast("No active shop"); return; }
+
+      const { total, unpriced } = computeBasket();
+      const elapsedSec = Math.floor((Date.now() - (shop.startedAtMs||Date.now()))/1000);
+      const ok = await confirmModal({
+        title: "Complete shop?",
+        message: `This will end shopping mode and save the shop for reports. Basket total: ${money(total)}${unpriced?` (plus ${unpriced} unpriced)`:``}.`,
+        confirmLabel: "Complete shop",
+        confirmClass: "primary",
+        cancelLabel: "Cancel"
+      });
+      if(!ok) return;
+
+      const finalItems = (state.items || []).map(x=>({
+        id: x.id,
+        name: x.name || "",
+        qty: x.qty ?? null,
+        unit: x.unit || "",
+        notes: x.notes || "",
+        categoryId: x.categoryId || null,
+        mealTags: Array.isArray(x.mealTags) ? x.mealTags : [],
+        picked: !!x.picked,
+        pickedQty: x.pickedQty ?? null,
+        pickedCost: x.pickedCost ?? null
+      }));
+
+      setSync("Sync • Saving…", "warn");
+      await updateDoc(doc(db, "households", state.selectedHouseholdId, "shops", shop.shopId), {
+        status: "completed",
+        completedAt: serverTimestamp(),
+        completedByUid: state.user.uid,
+        durationSeconds: elapsedSec,
+        durationHms: fmtHMS(elapsedSec),
+        basketTotal: Number(total.toFixed(2)),
+        unpricedCount: unpriced,
+        itemsFinal: finalItems,
+        updatedAt: serverTimestamp()
+      });
+      setSync("Sync • Up to date", "good");
+
+      state.activeShop = null;
+      setActiveShopKey(null);
+      toast("Shop completed");
+      renderShop();
+    }
+    async function resetShopSession(){
+      if(!guardHousehold()) return;
+      const cur = getCurrentList();
+      const shop = getActiveShop();
+      if(!cur || !shop || shop.listId !== cur.id){ toast("No active shop"); return; }
+
+      const ok = await confirmModal({
+        title: "Reset shop?",
+        message: "This will reset the timer and basket, unpick all items, and clear any skipped items for this session.",
+        confirmLabel: "Reset shop",
+        confirmClass: "danger",
+        cancelLabel: "Cancel"
+      });
+      if(!ok) return;
+
+      setSync("Sync • Saving…", "warn");
+      const batch = writeBatch(db);
+
+      for(const it of (state.items||[])){
+        const itemRef = doc(db, "households", state.selectedHouseholdId, "lists", cur.id, "items", it.id);
+        batch.update(itemRef, {
+          picked: false,
+          pickedAt: null,
+          pickedQty: null,
+          pickedCost: null,
+          updatedAt: serverTimestamp(),
+          updatedByUid: state.user.uid
+        });
+      }
+
+      const shopRef = doc(db, "households", state.selectedHouseholdId, "shops", shop.shopId);
+      const nowMs = Date.now();
+      batch.update(shopRef, {
+        startedAt: serverTimestamp(),
+        startedAtMs: nowMs,
+        basketTotal: 0,
+        unpricedCount: 0,
+        excludedIds: [],
+        excluded: {},
+        updatedAt: serverTimestamp()
+      });
+
+      await batch.commit();
+
+      shop.startedAtMs = nowMs;
+      shop.excludedIds = [];
+      for(let i=0;i<(state.items||[]).length;i++){
+        state.items[i] = { ...state.items[i], picked:false, pickedAt:null, pickedQty:null, pickedCost:null };
+      }
+
+      setSync("Sync • Up to date", "good");
+      toast("Shop reset");
+      renderShop();
+      try{ renderBuild(); }catch{}
+    }
+
+
+
+    async function openQuickAddShopModal(){
+      if(!guardHousehold()) return;
+      const cur = getCurrentList();
+      if(!cur){ toast("Select a list first"); return; }
+
+      const cats = (state.categories||[]).slice();
+      const catOptions = [`<option value="">Uncategorised</option>`]
+        .concat(cats.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`))
+        .join("");
+
+      showModal({
+        title: "Quick add",
+        body: `
+          <div class="field"><label>Item name</label><input id="qaName" placeholder="e.g. Milk" /></div>
+          <div class="grid2">
+            <div class="field"><label>Quantity</label><input id="qaQty" type="number" inputmode="decimal" placeholder="e.g. 1" /></div>
+            <div class="field"><label>Unit</label><input id="qaUnit" placeholder="e.g. bottles" /></div>
+          </div>
+          <div class="field"><label>Category</label><select id="qaCat">${catOptions}</select></div>
+          <div class="field"><label>Notes (optional)</label><textarea id="qaNotes" placeholder="e.g. Semi-skimmed"></textarea></div>
+        `,
+        footerButtons: [
+          { label: "Cancel", className: "ghost" },
+          {
+            label: "Add",
+            className: "primary",
+            onClick: async ()=>{
+              const name = ($("#qaName").value||"").trim();
+              if(!name) { toast("Enter an item name"); return false; }
+              const qtyRaw = ($("#qaQty").value||"").trim();
+              const qty = qtyRaw==="" ? null : Number(qtyRaw);
+              const unit = ($("#qaUnit").value||"").trim();
+              const catId = ($("#qaCat").value||"") || null;
+              const notes = ($("#qaNotes").value||"").trim();
+
+              setSync("Sync • Adding…", "warn");
+              await addDoc(collection(db, "households", state.selectedHouseholdId, "lists", cur.id, "items"), {
+                name, qty: Number.isFinite(qty) ? qty : null, unit, categoryId: catId, notes,
+                picked: false,
+                createdAt: serverTimestamp(),
+                createdByUid: state.user.uid,
+                updatedAt: serverTimestamp(),
+                updatedByUid: state.user.uid
+              });
+              setSync("Sync • Up to date", "good");
+              toast("Item added");
+            }
+          },
+          {
+            label: "Add & pick",
+            className: "secondary",
+            onClick: async ()=>{
+              const name = ($("#qaName").value||"").trim();
+              if(!name) { toast("Enter an item name"); return false; }
+              const qtyRaw = ($("#qaQty").value||"").trim();
+              const qty = qtyRaw==="" ? null : Number(qtyRaw);
+              const unit = ($("#qaUnit").value||"").trim();
+              const catId = ($("#qaCat").value||"") || null;
+              const notes = ($("#qaNotes").value||"").trim();
+
+              setSync("Sync • Adding…", "warn");
+              const newRef = await addDoc(collection(db, "households", state.selectedHouseholdId, "lists", cur.id, "items"), {
+                name, qty: Number.isFinite(qty) ? qty : null, unit, categoryId: catId, notes,
+                picked: false,
+                createdAt: serverTimestamp(),
+                createdByUid: state.user.uid,
+                updatedAt: serverTimestamp(),
+                updatedByUid: state.user.uid
+              });
+              setSync("Sync • Up to date", "good");
+              // Wait for snapshot to include it, then open pick modal with minimal item object
+              hideModal();
+              openShopPickModal({ id: newRef.id, name, qty, unit, notes, categoryId: catId, mealTags: [], picked:false });
+              return false; // keep modal closed already
+            }
+          }
+        ]
+      });
+      setTimeout(()=>{ try{ $("#qaName").focus(); }catch{} }, 60);
+    }
+
+function renderMealTags(it){
       const tags = Array.isArray(it?.mealTags) ? it.mealTags.filter(Boolean) : [];
       if(!tags.length) return "";
       const shown = tags.slice(0,2);
@@ -1751,6 +2510,31 @@ $("#btnNewList").addEventListener("click", async ()=>{
     $("#btnTogglePicked")?.addEventListener("click", ()=>{
       state.showPicked = !state.showPicked;
       renderBuild();
+    });
+
+
+    // Shop tab
+    $("#btnStartShop")?.addEventListener("click", async ()=>{
+      await loadActiveShopIfAny();
+      await startShopSession();
+    });
+    $("#btnCompleteShop")?.addEventListener("click", async ()=>{
+      await loadActiveShopIfAny();
+      await completeShopSession();
+    });
+    $("#btnResetShop")?.addEventListener("click", async ()=>{
+      await loadActiveShopIfAny();
+      await resetShopSession();
+      try{ renderShop(); }catch{}
+      try{ renderBuild(); }catch{}
+    });
+    $("#btnQuickAddShop")?.addEventListener("click", async ()=>{
+      await openQuickAddShopModal();
+    });
+    $("#btnShopTogglePicked")?.addEventListener("click", ()=>{
+      state.shopShowPicked = !state.shopShowPicked;
+      localStorage.setItem("bb.shopShowPicked", state.shopShowPicked ? "1" : "0");
+      renderShop();
     });
 
 
