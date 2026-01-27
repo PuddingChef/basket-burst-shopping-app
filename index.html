@@ -565,12 +565,45 @@
               <button class="btn danger" id="btnResetShop" type="button" style="display:none">Reset shop</button>
               <button class="btn secondary" id="btnQuickAddShop" type="button">Quick add</button>
               <button class="btn ghost" id="btnShopTogglePicked" type="button">Show picked</button>
+                          <button class="btn ghost" id="btnShopHistory" type="button">Previous shops</button>
             </div>
           </div>
 
-          <div class="card">
-            <div id="shopItemsEmpty" class="muted">No items to shop. Add items in Build.</div>
-            <div id="shopItemsWrap" class="list" style="display:none"></div>
+          <div id="shopMainView">
+            <div class="card">
+              <div id="shopItemsEmpty" class="muted">No items to shop. Add items in Build.</div>
+              <div id="shopItemsWrap" class="list" style="display:none"></div>
+            </div>
+          </div>
+
+          <div id="shopHistoryView" style="display:none">
+            <div class="card">
+              <div class="row between">
+                <button class="btn ghost" id="btnShopHistoryBack" type="button">← Back</button>
+                <div class="h1" style="margin:0">Previous shops</div>
+              </div>
+              <div class="sep"></div>
+              <div id="shopHistoryEmpty" class="muted">No completed shops yet.</div>
+              <div id="shopHistoryList" class="list" style="display:none"></div>
+            </div>
+          </div>
+
+          <div id="shopDetailView" style="display:none">
+            <div class="card">
+              <div class="row between">
+                <button class="btn ghost" id="btnShopDetailBack" type="button">← Back</button>
+                <div class="h1" style="margin:0">Shop details</div>
+              </div>
+              <div class="sep"></div>
+              <div id="shopDetailSummary"></div>
+              <div class="sep"></div>
+              <div class="row gap" style="flex-wrap:wrap">
+                <button class="btn ghost" id="btnShopDetailToggleAll" type="button">Show all items</button>
+                <button class="btn danger" id="btnDeleteShopRecord" type="button">Delete record</button>
+              </div>
+              <div class="sep"></div>
+              <div id="shopDetailItems" class="list"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -931,6 +964,10 @@ async function confirmModal({title="Confirm", message="", confirmLabel="OK", can
             shopShowPicked: (localStorage.getItem("bb.shopShowPicked")==="1"),
       activeShop: null,
       shopTick: null,
+      shopView: "main",
+      shopHistory: [],
+      shopDetail: null,
+      shopDetailShowAll: false,
 lastFocusEl: null,
       showArchivedLists: (localStorage.getItem("bb.showArchivedLists")==="1")
     };
@@ -1593,7 +1630,264 @@ row.querySelector("[data-skip]")?.addEventListener("click", async (e)=>{
       }
     }
 
-    async function openShopPickModal(it, opts={}){
+    
+    function setShopView(view){
+      state.shopView = view;
+      const mainV = $("#shopMainView");
+      const histV = $("#shopHistoryView");
+      const detV = $("#shopDetailView");
+      if(mainV) mainV.style.display = (view==="main") ? "" : "none";
+      if(histV) histV.style.display = (view==="history") ? "" : "none";
+      if(detV) detV.style.display = (view==="detail") ? "" : "none";
+      // Keep header in place; just rerender relevant view
+      if(view==="main"){
+        try{ renderShop(); }catch{}
+      }else if(view==="history"){
+        try{ renderShopHistory(); }catch{}
+      }else if(view==="detail"){
+        try{ renderShopDetail(); }catch{}
+      }
+    }
+
+    function tsToMs(v){
+      if(!v) return null;
+      if(typeof v === "number") return v;
+      if(typeof v.toMillis === "function") return v.toMillis();
+      if(typeof v.seconds === "number") return v.seconds*1000;
+      return null;
+    }
+    function fmtDateTime(ms){
+      if(!ms) return "—";
+      const d = new Date(ms);
+      return d.toLocaleString(undefined, { weekday:"short", day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" });
+    }
+
+    async function loadShopHistory(){
+      if(!guardHousehold()) return [];
+      try{
+        const qy = query(
+          collection(db, "households", state.selectedHouseholdId, "shops"),
+          where("status","==","completed"),
+          orderBy("completedAt","desc"),
+          limit(50)
+        );
+        const snap = await getDocs(qy);
+        const out = [];
+        snap.forEach(d=>{
+          const data = d.data() || {};
+          out.push({ id:d.id, ...data });
+        });
+        state.shopHistory = out;
+        return out;
+      }catch(err){
+        console.warn("Shop history load failed", err);
+        state.shopHistory = [];
+        return [];
+      }
+    }
+
+    function renderShopHistory(){
+      const empty = $("#shopHistoryEmpty");
+      const list = $("#shopHistoryList");
+      if(!empty || !list) return;
+      const items = Array.isArray(state.shopHistory) ? state.shopHistory : [];
+      if(!items.length){
+        empty.style.display = "block";
+        list.style.display = "none";
+        return;
+      }
+      empty.style.display = "none";
+      list.style.display = "flex";
+      list.innerHTML = "";
+
+      for(const s of items){
+        const ms = tsToMs(s.completedAt) || null;
+        const when = fmtDateTime(ms);
+        const total = Number.isFinite(Number(s.basketTotal)) ? money(Number(s.basketTotal)) : "£—";
+        const dur = s.durationHms || (Number.isFinite(Number(s.durationSeconds)) ? fmtHMS(Number(s.durationSeconds)) : "—");
+        const pickedCount = Array.isArray(s.itemsFinal) ? s.itemsFinal.filter(x=>x && x.picked).length : 0;
+        const totalCount = Array.isArray(s.itemsFinal) ? s.itemsFinal.length : 0;
+
+        const row = document.createElement("div");
+        row.className = "item";
+        row.style.cursor = "pointer";
+        row.innerHTML = `
+          <div class="grow">
+            <div class="title">${escapeHtml(when)}</div>
+            <div class="sub">${escapeHtml(total)} • ${escapeHtml(dur)} • ${pickedCount}/${totalCount} picked${s.unpricedCount?` • ${s.unpricedCount} unpriced`:``}</div>
+          </div>
+          <button class="btn ghost small" type="button" data-open>View</button>
+          <button class="btn danger small" type="button" data-del>Delete</button>
+        `;
+        row.querySelector("[data-open]")?.addEventListener("click", (e)=>{
+          e.stopPropagation();
+          openShopDetail(s.id);
+        });
+        row.addEventListener("click", ()=> openShopDetail(s.id));
+        row.querySelector("[data-del]")?.addEventListener("click", async (e)=>{
+          e.stopPropagation();
+          await deleteShopRecord(s.id);
+        });
+
+        list.appendChild(row);
+      }
+    }
+
+    async function openShopHistory(){
+      setShopView("history");
+      await loadShopHistory();
+      renderShopHistory();
+    }
+
+    async function openShopDetail(shopId){
+      if(!guardHousehold()) return;
+      let rec = (state.shopHistory||[]).find(x=>x.id===shopId) || null;
+      if(!rec){
+        try{
+          const snap = await getDoc(doc(db, "households", state.selectedHouseholdId, "shops", shopId));
+          if(snap.exists()) rec = { id:snap.id, ...(snap.data()||{}) };
+        }catch{}
+      }
+      state.shopDetail = rec;
+      state.shopDetailShowAll = false;
+      setShopView("detail");
+      renderShopDetail();
+    }
+
+    function renderShopDetail(){
+      const wrap = $("#shopDetailItems");
+      const sum = $("#shopDetailSummary");
+      const btn = $("#btnShopDetailToggleAll");
+      if(!wrap || !sum) return;
+
+      const s = state.shopDetail;
+      if(!s){
+        sum.innerHTML = `<div class="muted">Shop not found.</div>`;
+        wrap.innerHTML = "";
+        return;
+      }
+      const ms = tsToMs(s.completedAt) || null;
+      const when = fmtDateTime(ms);
+      const total = Number.isFinite(Number(s.basketTotal)) ? money(Number(s.basketTotal)) : "£—";
+      const dur = s.durationHms || (Number.isFinite(Number(s.durationSeconds)) ? fmtHMS(Number(s.durationSeconds)) : "—");
+      const unp = s.unpricedCount ? `${s.unpricedCount} unpriced` : "All priced";
+      const allItems = Array.isArray(s.itemsFinal) ? s.itemsFinal : [];
+      const pickedItems = allItems.filter(x=>x && x.picked);
+      const showing = state.shopDetailShowAll ? allItems : pickedItems;
+
+      sum.innerHTML = `
+        <div class="card" style="padding:10px">
+          <div class="h1" style="margin:0">${escapeHtml(when)}</div>
+          <div class="muted" style="margin-top:4px">${escapeHtml(total)} • ${escapeHtml(dur)} • ${pickedItems.length}/${allItems.length} picked • ${escapeHtml(unp)}</div>
+        </div>
+      `;
+
+      if(btn){
+        btn.textContent = state.shopDetailShowAll ? "Show picked only" : "Show all items";
+      }
+
+      wrap.innerHTML = "";
+      if(!showing.length){
+        wrap.innerHTML = `<div class="muted">No items to show.</div>`;
+        return;
+      }
+
+      // group by category for readability
+      const groups = new Map();
+      for(const it of showing){
+        const key = it.categoryId || "__uncat__";
+        if(!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(it);
+      }
+      const order = (state.categories || []).map(c=>c.id).filter(id=>groups.has(id));
+      if(groups.has("__uncat__")) order.push("__uncat__");
+
+      for(const catId of order){
+        const h = document.createElement("div");
+        h.className = "muted";
+        h.style.margin = "10px 2px 6px";
+        h.style.fontWeight = "800";
+        h.textContent = catId==="__uncat__" ? "Uncategorised" : categoryLabel(catId);
+        wrap.appendChild(h);
+
+        for(const it of groups.get(catId)){
+          const row = document.createElement("div");
+          row.className = "item" + (it.picked ? " picked" : "");
+          const qtyTxt = (it.qty!=null) ? `${it.qty}${it.unit?` ${it.unit}`:``}` : "";
+          const costTxt = Number.isFinite(Number(it.pickedCost)) ? money(Number(it.pickedCost)) : "£—";
+          const pickedQtyTxt = Number.isFinite(Number(it.pickedQty)) ? `Qty ${Number(it.pickedQty)}` : "";
+          row.innerHTML = `
+            <div class="grow">
+              <div class="title">${escapeHtml(it.name || "Item")}</div>
+              <div class="sub">${qtyTxt ? escapeHtml(qtyTxt) + " • " : ""}${escapeHtml(categoryLabel(it.categoryId))}${it.notes ? " • " + escapeHtml(it.notes) : ""}${it.picked ? " • Picked" + (pickedQtyTxt?(" • "+escapeHtml(pickedQtyTxt)):"") + " • " + escapeHtml(costTxt) : ""}</div>
+            </div>
+            <button class="btn ghost small" type="button" data-save title="Save to template">Save</button>
+          `;
+          row.querySelector("[data-save]")?.addEventListener("click", async (e)=>{
+            e.stopPropagation();
+            await saveTemplateItemFromSnapshot(it);
+          });
+          wrap.appendChild(row);
+        }
+      }
+    }
+
+    async function saveTemplateItemFromSnapshot(it){
+      if(!guardHousehold()) return;
+      const name = (it?.name||"").trim();
+      if(!name){ toast("Item needs a name"); return; }
+      const tpl = Array.isArray(state.config?.weeklyTemplate) ? [...state.config.weeklyTemplate] : [];
+      const exists = tpl.some(x=> (x?.name||"").trim().toLowerCase()===name.toLowerCase() && (x.categoryId||null)===(it.categoryId||null));
+      if(exists){ toast("Already in template"); return; }
+
+      tpl.push({
+        id: crypto.randomUUID(),
+        name,
+        categoryId: it.categoryId || null,
+        qty: it.qty ?? null,
+        unit: it.unit || "",
+        notes: it.notes || ""
+      });
+
+      setSync("Sync • Saving…", "warn");
+      await setDoc(doc(db, "households", state.selectedHouseholdId, "settings", "config"), {
+        weeklyTemplate: tpl,
+        updatedAt: serverTimestamp(),
+        updatedByUid: state.user.uid
+      }, { merge: true });
+
+      // update local
+      state.config = { ...(state.config||{}), weeklyTemplate: tpl };
+      setSync("Sync • Up to date", "good");
+      toast("Saved to template");
+      try{ renderSetup(); }catch{}
+    }
+
+    async function deleteShopRecord(shopId){
+      if(!guardHousehold()) return;
+      const ok = await confirmModal({
+        title: "Delete shop record?",
+        message: "This permanently deletes this completed shop record. This won't affect your current lists.",
+        confirmLabel: "Delete",
+        confirmClass: "danger",
+        cancelLabel: "Cancel"
+      });
+      if(!ok) return;
+
+      setSync("Sync • Deleting…", "warn");
+      await deleteDoc(doc(db, "households", state.selectedHouseholdId, "shops", shopId));
+      setSync("Sync • Up to date", "good");
+      toast("Deleted");
+      state.shopHistory = (state.shopHistory||[]).filter(x=>x.id!==shopId);
+      if(state.shopDetail && state.shopDetail.id===shopId){
+        state.shopDetail = null;
+        setShopView("history");
+      }else{
+        renderShopHistory();
+      }
+    }
+
+async function openShopPickModal(it, opts={}){
       const cur = getCurrentList();
       if(!cur) return;
       const qtyDefault = (it.picked && Number.isFinite(Number(it.pickedQty))) ? Number(it.pickedQty) : (Number.isFinite(Number(it.qty)) ? Number(it.qty) : 1);
@@ -2535,6 +2829,26 @@ $("#btnNewList").addEventListener("click", async ()=>{
       state.shopShowPicked = !state.shopShowPicked;
       localStorage.setItem("bb.shopShowPicked", state.shopShowPicked ? "1" : "0");
       renderShop();
+    });
+
+
+    $("#btnShopHistory")?.addEventListener("click", async ()=>{
+      await openShopHistory();
+    });
+    $("#btnShopHistoryBack")?.addEventListener("click", ()=>{
+      setShopView("main");
+    });
+    $("#btnShopDetailBack")?.addEventListener("click", ()=>{
+      setShopView("history");
+    });
+    $("#btnShopDetailToggleAll")?.addEventListener("click", ()=>{
+      state.shopDetailShowAll = !state.shopDetailShowAll;
+      renderShopDetail();
+    });
+    $("#btnDeleteShopRecord")?.addEventListener("click", async ()=>{
+      const id = state.shopDetail?.id;
+      if(!id) return;
+      await deleteShopRecord(id);
     });
 
 
