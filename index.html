@@ -392,7 +392,40 @@
       .mealActions{ width:100%; justify-content:flex-start; }
     }
 
-</style>
+
+    /* Build prompts (room checks) */
+    .promptGrid{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+    @media (max-width: 420px){ .promptGrid{grid-template-columns:1fr} }
+    .promptCard{
+      text-align:left;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(15,23,42,.10);
+      padding: 12px 12px;
+      background: linear-gradient(135deg, rgba(255,61,127,.14), rgba(0,212,255,.12));
+      box-shadow: 0 10px 22px rgba(15,23,42,.08);
+      cursor:pointer;
+      user-select:none;
+      transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+      min-height: 64px;
+      display:flex;
+      align-items:center;
+      gap:12px;
+    }
+    .promptCard:active{transform: scale(.98)}
+    .promptCard:hover{filter: brightness(1.02)}
+    .promptIcon{
+      width:44px;height:44px;border-radius:14px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,197,66,.22);
+      border: 1px solid rgba(255,197,66,.35);
+      font-size: 22px;
+      flex:0 0 auto;
+    }
+    .promptMeta .ptitle{font-weight:900; letter-spacing:-0.2px}
+    .promptMeta .psub{font-size:12.5px; color: var(--slate); margin-top:2px}
+    .btnIconOnly{padding: 10px 12px}
+
+  </style>
 </head>
 <body>
   <div class="app">
@@ -459,6 +492,18 @@
             </div>
 
             <div class="sep"></div>
+
+
+            <div class="card" id="buildPromptsCard" style="display:none">
+              <div class="row" style="align-items:flex-start">
+                <div class="grow">
+                  <div class="h1" style="font-size:16px; margin:0">Quick checks</div>
+                  <div class="muted" style="margin-top:6px">Tap a room and add the bits people forget — make list-building feel lighter.</div>
+                </div>
+              </div>
+              <div class="sep"></div>
+              <div id="promptGrid" class="promptGrid"></div>
+            </div>
 
             <div class="row wrap" style="justify-content:space-between">
               <div class="muted">Items</div>
@@ -1086,6 +1131,11 @@ const el = document.createElement("div");
       }[c]));
     }
 
+    // Safe for inserting into HTML attribute values (e.g., value="...")
+    function escapeAttr(s){
+      return escapeHtml(String(s ?? ""));
+    }
+
     async function selectHousehold(hid, opts={}){
       state.selectedHouseholdId = hid;
       localStorage.setItem("bb.selectedHouseholdId", hid);
@@ -1268,6 +1318,14 @@ await loadActiveShopIfAny();
     function getCurrentList(){
       const id = getCurrentListId();
       return (state.lists || []).find(l=>l.id===id) || null;
+    }
+
+    function isWeeklyShopList(list){
+      if(!list) return false;
+      if(list.type === "weekly") return true;
+      // Fallback for older data
+      if(list.pinned === true && /weekly/i.test(list.name||"")) return true;
+      return false;
     }
 
     function attachItemsListener(){
@@ -2220,6 +2278,10 @@ function renderMealTags(it){
       }
 
       const cur = getCurrentList();
+      const promptsCard = $("#buildPromptsCard");
+      if(promptsCard){
+        promptsCard.style.display = isWeeklyShopList(cur) ? "" : "none";
+      }
       if(!cur){
         empty.style.display = "block";
         empty.textContent = "Select a list in the Lists tab to start building.";
@@ -2230,6 +2292,8 @@ function renderMealTags(it){
       empty.style.display = "none";
       wrap.style.display = "block";
       curEl.textContent = cur.name || (cur.type==="weekly" ? "Weekly shop" : "List");
+
+      try{ renderBuildPrompts(); }catch{}
 
       if(togglePickedBtn){
         togglePickedBtn.textContent = state.showPicked ? "Hide picked" : "Show picked";
@@ -2276,6 +2340,7 @@ function renderMealTags(it){
               ${renderMealTags(it)}
               <div class="sub">${qtyTxt ? escapeHtml(qtyTxt) + " • " : ""}${escapeHtml(categoryLabel(it.categoryId))}${it.notes ? " • " + escapeHtml(it.notes) : ""}${it.picked ? " • Picked" : ""}</div>
             </div>
+            <button class="btn ghost small" type="button" data-edit title="Edit item">✎</button>
             <button class="btn secondary small" type="button" data-toggle>${it.picked ? "Unpick" : "Pick"}</button>
             <button class="btn danger small" type="button" data-del>×</button>
           `;
@@ -2292,6 +2357,13 @@ function renderMealTags(it){
               updatedByUid: state.user.uid
             });
             setSync("Sync • Up to date", "good");
+          });
+
+          row.querySelector("[data-edit]")?.addEventListener("click", async (e)=>{
+            e.stopPropagation();
+            const cur = getCurrentList();
+            if(!cur) return;
+            await openEditBuildItemModal(it);
           });
 
           row.querySelector("[data-del]")?.addEventListener("click", async (e)=>{
@@ -2547,6 +2619,83 @@ function renderSetup(){
     }
   }
 }
+    async function openEditBuildItemModal(it){
+      const cur = getCurrentList();
+      if(!cur) return;
+
+      const cats = (state.categories||[]).slice();
+      const catOptions = [`<option value="">Uncategorised</option>`]
+        .concat(cats.map(c=>`<option value="${escapeHtml(c.id)}" ${c.id===it.categoryId ? "selected":""}>${escapeHtml(c.name)}</option>`))
+        .join("");
+
+      showModal({
+        title: "Edit item",
+        body: `
+          <div class="grid2">
+            <div class="field">
+              <label>Item name</label>
+              <input id="eiName" placeholder="e.g. Milk" value="${escapeAttr(it.name||"")}" />
+            </div>
+            <div class="field">
+              <label>Category</label>
+              <select id="eiCat">
+                ${catOptions}
+              </select>
+            </div>
+            <div class="field">
+              <label>Quantity</label>
+              <input id="eiQty" type="number" inputmode="decimal" placeholder="e.g. 2" value="${it.qty===null || it.qty===undefined ? "" : escapeAttr(String(it.qty))}" />
+            </div>
+            <div class="field">
+              <label>Unit</label>
+              <input id="eiUnit" placeholder="e.g. bottles" value="${escapeAttr(it.unit||"")}" />
+            </div>
+            <div class="field" style="grid-column:1 / -1">
+              <label>Notes (optional)</label>
+              <textarea id="eiNotes" placeholder="e.g. Semi-skimmed">${escapeHtml(it.notes||"")}</textarea>
+            </div>
+          </div>
+        `,
+        footerButtons: [
+          { label:"Cancel", className:"btn ghost" },
+          { label:"Save", className:"btn primary", onClick: async ()=>{
+              const name = ($("#eiName").value || "").trim();
+              if(!name){ toast("Please enter an item name"); return false; }
+              const categoryId = ($("#eiCat").value || "") || null;
+              const qtyRaw = ($("#eiQty").value || "").trim();
+              const qty = qtyRaw ? Number(qtyRaw) : null;
+              const unit = ($("#eiUnit").value || "").trim();
+              const notes = ($("#eiNotes").value || "").trim();
+
+              setSync("Sync • Saving…", "warn");
+              await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", cur.id, "items", it.id), {
+                name,
+                categoryId,
+                qty,
+                unit,
+                notes,
+                updatedAt: serverTimestamp(),
+                updatedByUid: state.user.uid
+              });
+
+              try{
+                const idx = (state.items||[]).findIndex(x=>x.id===it.id);
+                if(idx>=0){
+                  state.items[idx] = { ...state.items[idx], name, categoryId, qty, unit, notes };
+                }
+              }catch{}
+
+              setSync("Sync • Up to date", "good");
+              try{ renderBuild(); }catch{}
+              try{ renderShop(); }catch{}
+              return true;
+            }
+          }
+        ]
+      });
+    }
+
+
 
 
 async function deleteCategory(catId){
@@ -2995,6 +3144,288 @@ function openListSettings(list){
     function mealNorm(s){
       return String(s||"").trim().toLowerCase().replace(/\s+/g," ");
     }
+
+
+    // Build prompts (room checks) — MVP seed library (global)
+    const ROOM_PROMPTS = [
+      { id:"kitchen", icon:"🍽️", title:"Kitchen", subtitle:"Wraps, baking, basics", items:[
+        { name:"Cling film", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"Tin foil", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"Baking paper", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"Dishwasher tablets", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Dishwasher cleaner", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Washing-up liquid", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Sponges / scourers", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" }
+      ]},
+      { id:"bathroom", icon:"🧼", title:"Bathroom", subtitle:"Toiletries + personal care", items:[
+        { name:"Toothpaste", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Shower gel", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Shampoo", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Conditioner", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Cotton buds", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Toilet roll", categoryKey:"Household", qty:null, unit:"", notes:"" }
+      ]},
+      
+      { id:"bedroom", icon:"🛏️", title:"Bedroom", subtitle:"Hair + personal bits", items:[
+        { name:"Deodorant", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Moisturiser", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Condoms", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Dry shampoo", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Hair mousse", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Hair spray", categoryKey:"Toiletries", qty:null, unit:"", notes:"" }
+      ]},
+{ id:"health", icon:"💊", title:"Health", subtitle:"Medicine cabinet essentials", items:[
+        { name:"Painkillers", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
+        { name:"Vitamins", categoryKey:"Toiletries", qty:null, unit:"", notes:"" }
+      ]},
+      { id:"cleaning", icon:"🧽", title:"Cleaning", subtitle:"The ‘we forgot it’ essentials", items:[
+        { name:"Bin bags", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Washing pods / powder", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Fabric softener", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Anti-bac spray", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Bleach", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Washing machine cleaner", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Carpet cleaner", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Polish", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Air freshener", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Kitchen roll", categoryKey:"Household", qty:null, unit:"", notes:"" }
+      ]},
+      { id:"kids", icon:"🧸", title:"Kids / Baby", subtitle:"Wipes, bedtime, extras", items:[
+        { name:"Baby wipes", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"Dry mats (child bed)", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"Nappies", categoryKey:"Household", qty:null, unit:"", notes:"(if needed)" }
+      ]},
+      { id:"pets", icon:"🐾", title:"Pets", subtitle:"Food + litter", items:[
+        { name:"Cat food", categoryKey:"Pets", qty:null, unit:"", notes:"" },
+        { name:"Cat litter", categoryKey:"Pets", qty:null, unit:"", notes:"" },
+        { name:"Pet treats", categoryKey:"Pets", qty:null, unit:"", notes:"" }
+      ]},
+      { id:"household", icon:"🏠", title:"Household cupboard", subtitle:"Low-frequency stuff", items:[
+        { name:"Light bulbs", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"Batteries", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"Tissues", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"First-aid bits", categoryKey:"Household", qty:null, unit:"", notes:"(if needed)" }
+      ]}
+    ];
+
+
+    function categoryIdFromKey(key){
+      const k = String(key||"").trim().toLowerCase();
+      // Try exact name match first
+      const hit = (state.categories||[]).find(c=> String(c.name||"").trim().toLowerCase() === k);
+      if(hit) return hit.id;
+      // Try contains match (e.g. "Cleaning Products")
+      const hit2 = (state.categories||[]).find(c=> String(c.name||"").trim().toLowerCase().includes(k) || k.includes(String(c.name||"").trim().toLowerCase()));
+      return hit2 ? hit2.id : null;
+    }
+
+    function renderBuildPrompts(){
+      const grid = document.getElementById("promptGrid");
+      const card = document.getElementById("buildPromptsCard");
+      if(!grid || !card) return;
+      const cur = getCurrentList();
+      if(!state.user || !state.selectedHouseholdId || !cur){
+        card.style.display = "none";
+        return;
+      }
+      if(!isWeeklyShopList(cur)){
+        card.style.display = "none";
+        return;
+      }
+      card.style.display = "block";
+      grid.innerHTML = "";
+      for(const r of ROOM_PROMPTS){
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "promptCard";
+        btn.innerHTML = `
+          <div class="promptIcon">${r.icon || "✨"}</div>
+          <div class="promptMeta grow">
+            <div class="ptitle">${escapeHtml(r.title)}</div>
+            <div class="psub">${escapeHtml(r.subtitle || (r.items?.length ? r.items.length + " suggestions" : ""))}</div>
+          </div>
+          <div class="muted" style="font-weight:900">+</div>
+        `;
+        btn.addEventListener("click", ()=> openRoomPromptModal(r));
+        grid.appendChild(btn);
+      }
+    }
+
+    async function mergePromptItemsIntoCurrent(items, meta={}){
+      const cur = getCurrentList();
+      if(!cur){ toast("Select a list first"); setTab("lists"); return; }
+      if(!guardHousehold()) return;
+
+      const listId = cur.id;
+      const hid = state.selectedHouseholdId;
+
+      setSync("Sync • Adding…", "warn");
+
+      // Build lookup of existing items (from local state if possible, else fetch)
+      let existing = (state.items||[]).slice();
+      try{
+        if(!existing.length){
+          const itemsCol = collection(db, "households", hid, "lists", listId, "items");
+          const snap = await getDocs(query(itemsCol));
+          existing = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+        }
+      }catch{}
+
+      const map = new Map();
+      existing.forEach(it=>{
+        const key = mealNorm(it.name);
+        if(key) map.set(key, it);
+      });
+
+      const batch = writeBatch(db);
+      const itemsCol = collection(db, "households", hid, "lists", listId, "items");
+      let adds = 0, updates = 0;
+
+      for(const pi of (items||[])){
+        const name = String(pi.name||"").trim();
+        if(!name) continue;
+        const key = mealNorm(name);
+        const ex = key ? map.get(key) : null;
+
+        const catId = pi.categoryId || categoryIdFromKey(pi.categoryKey) || null;
+        const piQty = (pi.qty===null || pi.qty===undefined || pi.qty==="") ? null : Number(pi.qty);
+        const sayUnit = String(pi.unit||"").trim();
+        const piUnit = sayUnit || "";
+
+        if(ex){
+          const ref = doc(db, "households", hid, "lists", listId, "items", ex.id);
+          const exQty = (ex.qty===null || ex.qty===undefined) ? null : Number(ex.qty);
+          const exUnit = String(ex.unit||"").trim();
+
+          const patch = { updatedAt: serverTimestamp(), updatedByUid: state.user.uid };
+          // Category: only fill if missing
+          if(!ex.categoryId && catId) patch.categoryId = catId;
+
+          // Quantity: add if units match, else leave quantity alone (safe MVP)
+          if(exQty!==null && piQty!==null){
+            if((exUnit||"").toLowerCase() === (piUnit||"").toLowerCase()){
+              patch.qty = exQty + piQty;
+              if(piUnit && !exUnit) patch.unit = piUnit;
+            }
+          } else if(exQty===null && piQty!==null){
+            patch.qty = piQty;
+            if(piUnit && !exUnit) patch.unit = piUnit;
+          }
+
+          // Notes: append if provided and not already present
+          const piNotes = String(pi.notes||"").trim();
+          if(piNotes){
+            const exNotes = String(ex.notes||"").trim();
+            if(!exNotes) patch.notes = piNotes;
+            else if(!exNotes.toLowerCase().includes(piNotes.toLowerCase())) patch.notes = exNotes + " • " + piNotes;
+          }
+
+          batch.update(ref, patch);
+          updates++;
+        }else{
+          const ref = doc(itemsCol);
+          batch.set(ref, {
+            name,
+            categoryId: catId || null,
+            qty: Number.isFinite(piQty) ? piQty : null,
+            unit: piUnit || "",
+            notes: String(pi.notes||"").trim(),
+            picked: false,
+            createdAt: serverTimestamp(),
+            createdByUid: state.user.uid,
+            updatedAt: serverTimestamp(),
+            updatedByUid: state.user.uid
+          });
+          adds++;
+        }
+      }
+
+      if(adds || updates){
+        await batch.commit();
+        setSync("Sync • Up to date", "good");
+        toast(`Added ${adds} • Updated ${updates}`);
+      }else{
+        setSync("Sync • Up to date", "good");
+        toast("Nothing to add");
+      }
+    }
+
+    function openRoomPromptModal(room){
+      const cur = getCurrentList();
+      if(!cur) return;
+      if(!isWeeklyShopList(cur)){
+        toast("Quick checks are only available for Weekly Shop.", {ms:2600});
+        return;
+      }
+
+      const rawItems = (room.items||[]).map((x,i)=>({ ...x, _i:i }));
+      const items = rawItems.map(x=>({
+        ...x,
+        categoryId: x.categoryId || categoryIdFromKey(x.categoryKey) || null
+      }));
+
+      const listHtml = items.map((it, idx)=>{
+        const cat = categoryLabel(it.categoryId);
+        const notes = it.notes ? ` • <span class="muted">${escapeHtml(it.notes)}</span>` : "";
+        return `
+          <div class="item" data-pr-row data-idx="${idx}">
+            <label class="row" style="gap:10px; align-items:flex-start">
+              <input type="checkbox" class="pickCheck" data-pr-check checked />
+              <div class="grow">
+                <div class="title">${escapeHtml(it.name)}</div>
+                <div class="sub">${escapeHtml(cat)}${notes}</div>
+              </div>
+            </label>
+          </div>`;
+      }).join("");
+
+      showModal({
+        title: `${room.title} check`,
+        body: `
+          <div class="muted">Tick what you need. Duplicates will merge into Weekly Shop.</div>
+          <div class="sep"></div>
+          <div class="row" style="gap:10px; justify-content:flex-end">
+            <button class="btn secondary small" id="prPickAll" type="button">Select all</button>
+            <button class="btn ghost small" id="prClearAll" type="button">Clear all</button>
+          </div>
+          <div class="sep"></div>
+          <div style="max-height:52vh; overflow:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--divider); border-radius:16px; padding:8px; background: rgba(255,255,255,.7)">
+            <div id="prList" class="list" style="gap:8px">
+              ${listHtml || `<div class="muted">No suggestions yet.</div>`}
+            </div>
+          </div>
+        `,
+        footerButtons: [
+          { label:"Cancel", className:"btn ghost" },
+          { label:"Add selected", className:"btn primary", onClick: async ()=>{
+              const rows = Array.from($("#prList").querySelectorAll("[data-pr-row]"));
+              const picked = [];
+              rows.forEach((row)=>{
+                const idx = Number(row.getAttribute("data-idx"));
+                const chk = row.querySelector("[data-pr-check]");
+                if(chk && chk.checked) picked.push(items[idx]);
+              });
+              if(!picked.length){ toast("Nothing selected.", {ms:1800}); return false; }
+              await mergePromptItemsIntoCurrent(picked, { roomId: room.id });
+              toast(`Added ${picked.length} item${picked.length===1?"":"s"}.`, {ms:2200});
+              return true;
+            }
+          }
+        ]
+      });
+
+      // Inline controls
+      $("#prPickAll")?.addEventListener("click", ()=>{
+        const checks = Array.from(document.querySelectorAll("#prList [data-pr-check]"));
+        checks.forEach(c=>{ c.checked = true; });
+      });
+      $("#prClearAll")?.addEventListener("click", ()=>{
+        const checks = Array.from(document.querySelectorAll("#prList [data-pr-check]"));
+        checks.forEach(c=>c.checked=false);
+      });
+    }
+
+
 
     function parseQty(v){
       if(v===null || v===undefined) return null;
