@@ -4778,12 +4778,24 @@ $("#btnCreateHousehold").addEventListener("click", async ()=>{
               // Create membership + index if missing
               const batch = writeBatch(db);
 
-              // Member (member role by default; rules will prevent owner self-downgrade)
-              batch.set(doc(db, "households", hid, "members", state.user.uid), {
-                uid: state.user.uid,
-                role: "member",
-                joinedAt: serverTimestamp()
-              }, { merge: true });
+              const memberRef = doc(db, "households", hid, "members", state.user.uid);
+              const memSnap = await getDoc(memberRef);
+              const existingRole = memSnap.exists() ? (memSnap.data().role || "member") : null;
+
+              // If the user is already a member (especially an owner), DO NOT overwrite their role.
+              if(memSnap.exists()){
+                batch.set(memberRef, {
+                  uid: state.user.uid,
+                  // keep role as-is (no role field in merge)
+                  joinedAt: memSnap.data().joinedAt || serverTimestamp()
+                }, { merge: true });
+              }else{
+                batch.set(memberRef, {
+                  uid: state.user.uid,
+                  role: "member",
+                  joinedAt: serverTimestamp()
+                }, { merge: true });
+              }
 
               // Fetch household name
               const hhSnap = await getDoc(doc(db, "households", hid));
@@ -4792,7 +4804,7 @@ $("#btnCreateHousehold").addEventListener("click", async ()=>{
               batch.set(doc(db, "users", state.user.uid, "households", hid), {
                 householdId: hid,
                 householdName: hhName,
-                role: "member",
+                role: existingRole || "member",
                 joinedAt: serverTimestamp()
               }, { merge: true });
 
