@@ -4778,39 +4778,37 @@ $("#btnCreateHousehold").addEventListener("click", async ()=>{
               // Create membership + index if missing
               const batch = writeBatch(db);
 
-              const memberRef = doc(db, "households", hid, "members", state.user.uid);
-              const memSnap = await getDoc(memberRef);
-              const existingRole = memSnap.exists() ? (memSnap.data().role || "member") : null;
+              // Member (member role by default; rules will prevent owner self-downgrade)
+              batch.set(doc(db, "households", hid, "members", state.user.uid), {
+                uid: state.user.uid,
+                role: "member",
+                joinedAt: serverTimestamp()
+              }, { merge: true });
 
-              // If the user is already a member (especially an owner), DO NOT overwrite their role.
-              if(memSnap.exists()){
-                batch.set(memberRef, {
-                  uid: state.user.uid,
-                  // keep role as-is (no role field in merge)
-                  joinedAt: memSnap.data().joinedAt || serverTimestamp()
-                }, { merge: true });
-              }else{
-                batch.set(memberRef, {
-                  uid: state.user.uid,
-                  role: "member",
-                  joinedAt: serverTimestamp()
-                }, { merge: true });
-              }
-
-              // Fetch household name
-              const hhSnap = await getDoc(doc(db, "households", hid));
-              const hhName = hhSnap.exists() ? (hhSnap.data().name || "Household") : "Household";
+              // Set household name optimistically (can't read /households/{hid} until membership exists)
+              const hhName = (inv.householdName || inv.name || "Household");
 
               batch.set(doc(db, "users", state.user.uid, "households", hid), {
                 householdId: hid,
                 householdName: hhName,
-                role: existingRole || "member",
+                role: "member",
                 joinedAt: serverTimestamp()
               }, { merge: true });
 
               await batch.commit();
+
+              // Now that membership exists, best-effort refresh the household name in the user index
+              try{
+                const hhSnap2 = await getDoc(doc(db, "households", hid));
+                if(hhSnap2.exists()){
+                  const realName = hhSnap2.data().name || "Household";
+                  await setDoc(doc(db, "users", state.user.uid, "households", hid), { householdName: realName }, { merge:true });
+                }
+              }catch(e){ /* ignore */ }
+
               toast("Joined household");
               await refreshUserHouseholdsAndSelect(hid);
+              return true;
             }
           }
         ]
