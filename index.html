@@ -7,7 +7,6 @@
   <title>BasketBurst</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="icon" href="favicon.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
 
   <style>
@@ -677,7 +676,7 @@
 
             <div class="sep"></div>
 
-            <div class="h1" style="font-size:15px">Households</div>
+            <div class="h1" style="font-size:15px; color:#FF3D7F;">Households</div>
             <div class="muted">These are linked to your account and available on any device.</div>
             <div class="sep"></div>
 
@@ -692,14 +691,14 @@
 
 
 <div class="sep"></div>
-            <div class="h1" style="font-size:15px">Setup</div>
+            <div class="h1" style="font-size:15px; color:#FF3D7F;">Household Setup</div>
             <div class="muted">Set up your shop journey (categories) and Weekly Shop template.</div>
             <div class="sep"></div>
 
             <div id="setupBlock" class="muted">Select a household to manage setup.</div>
 
             <div id="setupWrap" style="display:none">
-              <div class="h1" style="font-size:15px">Categories</div>
+              <div class="h1" style="font-size:15px; color:#FF3D7F;">Categories</div>
               <div class="muted">Controls the order you’ll see items in Shopping Mode.</div>
               <div class="sep"></div>
               <div id="catsWrap" class="list"></div>
@@ -709,7 +708,7 @@
               </div>
 
               <div class="sep"></div>
-              <div class="h1" style="font-size:15px">Weekly template</div>
+              <div class="h1" style="font-size:15px; color:#FF3D7F;">Weekly Template</div>
               <div class="muted">These items come back every week when you reset.</div>
               <div class="sep"></div>
               <div id="tplEmpty" class="muted">No template items yet. Add your regulars (e.g., milk, bread).</div>
@@ -1107,7 +1106,6 @@ const el = document.createElement("div");
         el.innerHTML = `
           <div class="grow">
             <div class="title">${escapeHtml(h.householdName || "Household")}</div>
-            <div class="sub">${escapeHtml(h.householdId)} • ${escapeHtml(role)}</div>
           </div>
           
           <button class="iconBtn" type="button" data-manage aria-label="Household settings" title="Household settings">
@@ -1167,12 +1165,12 @@ const el = document.createElement("div");
         body: `
           <div class="card flat" style="margin:0">
             <div class="h1" style="margin:0">${escapeHtml(hhName)}</div>
-            <div class="muted" style="margin-top:6px">${escapeHtml(hid)} • ${escapeHtml(role==="owner" ? "Owner" : "Member")}</div>
+            <div class="muted" style="margin-top:6px">${escapeHtml(role==="owner" ? "Owner" : "Member")}</div>
           </div>
 
           <div class="sep"></div>
 
-          <div class="h1" style="font-size:15px">Members</div>
+          <div class="h1" style="font-size:15px; color:#FF3D7F;">Members</div>
           <div class="muted">Who has access to this household.</div>
           <div class="sep"></div>
           <div id="hsMembersEmpty" class="muted">Loading members…</div>
@@ -1180,7 +1178,7 @@ const el = document.createElement("div");
 
           <div class="sep"></div>
 
-          <div class="h1" style="font-size:15px">Invites</div>
+          <div class="h1" style="font-size:15px; color:#FF3D7F;">Invites</div>
           <div class="muted">Share a code so someone can join this household.</div>
           <div class="sep"></div>
           <div id="hsInvitesGuard" class="muted">Only the household owner can create invites.</div>
@@ -1544,6 +1542,7 @@ await loadActiveShopIfAny();
         header.className = "muted";
         header.style.margin = "10px 2px 6px";
         header.style.fontWeight = "800";
+        header.style.color = "#FF3D7F";
         header.textContent = catId==="__uncat__" ? "Uncategorised" : categoryLabel(catId);
         itemsWrap.appendChild(header);
 
@@ -1775,7 +1774,7 @@ row.querySelector("[data-skip]")?.addEventListener("click", async (e)=>{
             <div class="sub">${escapeHtml(total)} • ${escapeHtml(dur)} • ${pickedCount}/${totalCount} picked${s.unpricedCount?` • ${s.unpricedCount} unpriced`:``}</div>
           </div>
           <button class="btn ghost small" type="button" data-open>View</button>
-          <button class="btn danger small" type="button" data-del>Delete</button>
+          <button class="btn danger small" type="button" data-del>x</button>
         `;
         row.querySelector("[data-open]")?.addEventListener("click", (e)=>{
           e.stopPropagation();
@@ -1865,6 +1864,7 @@ row.querySelector("[data-skip]")?.addEventListener("click", async (e)=>{
         h.className = "muted";
         h.style.margin = "10px 2px 6px";
         h.style.fontWeight = "800";
+        h.style.color = "#FF3D7F";
         h.textContent = catId==="__uncat__" ? "Uncategorised" : categoryLabel(catId);
         wrap.appendChild(h);
 
@@ -2327,6 +2327,7 @@ function renderMealTags(it){
         header.className = "muted";
         header.style.margin = "10px 2px 6px";
         header.style.fontWeight = "800";
+        header.style.color = "#FF3D7F";
         header.textContent = catId==="__uncat__" ? "Uncategorised" : categoryLabel(catId);
         itemsWrap.appendChild(header);
 
@@ -2570,7 +2571,7 @@ function renderSetup(){
       ${!isSystem ? `
         <button class="btn secondary small" type="button" data-up>˄</button>
         <button class="btn secondary small" type="button" data-down>˅</button>
-            ${state.selectedRole==="owner" && c.id!=="uncategorised" ? `<button class="btn danger small" type="button" data-delcat>Delete</button>` : ``}
+            ${state.selectedRole==="owner" && c.id!=="uncategorised" ? `<button class="btn danger small" type="button" data-delcat>x</button>` : ``}
       ` : ``}
     `;
     row.querySelector("[data-up]")?.addEventListener("click", async (e)=>{
@@ -2610,7 +2611,7 @@ function renderSetup(){
           <div class="title">${escapeHtml(t.name || "Item")}</div>
           <div class="sub">${escapeHtml(catName)}${t.qty ? " • " + escapeHtml(String(t.qty)) + (t.unit ? " " + escapeHtml(t.unit) : "") : ""}${t.notes ? " • " + escapeHtml(t.notes) : ""}</div>
         </div>
-        <button class="btn secondary small" type="button" data-edit>Edit</button>
+        <button class="btn secondary small" type="button" data-edit>✎</button>
         <button class="btn danger small" type="button" data-del>×</button>
       `;
       row.querySelector("[data-edit]")?.addEventListener("click", ()=> openTemplateItemModal(t));
@@ -3155,7 +3156,11 @@ function openListSettings(list){
         { name:"Dishwasher tablets", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
         { name:"Dishwasher cleaner", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
         { name:"Washing-up liquid", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
-        { name:"Sponges / scourers", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" }
+        { name:"Sponges / scourers", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
+        { name:"Honey", categoryKey:"Cupboard", qty:null, unit:"", notes:"" },
+        { name:"Butter", categoryKey:"Dairy", qty:null, unit:"", notes:"" },
+        { name:"Cooking Oil", categoryKey:"Cupboard", qty:null, unit:"", notes:"" },
+        { name:"Herbs / Spices", categoryKey:"Cupboard", qty:null, unit:"", notes:"" }
       ]},
       { id:"bathroom", icon:"🧼", title:"Bathroom", subtitle:"Toiletries + personal care", items:[
         { name:"Toothpaste", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
@@ -3163,7 +3168,8 @@ function openListSettings(list){
         { name:"Shampoo", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
         { name:"Conditioner", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
         { name:"Cotton buds", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
-        { name:"Toilet roll", categoryKey:"Household", qty:null, unit:"", notes:"" }
+        { name:"Toilet roll", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"Mouthwash", categoryKey:"Toiletries", qty:null, unit:"", notes:"" }
       ]},
       
       { id:"bedroom", icon:"🛏️", title:"Bedroom", subtitle:"Hair + personal bits", items:[
@@ -3174,9 +3180,10 @@ function openListSettings(list){
         { name:"Hair mousse", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
         { name:"Hair spray", categoryKey:"Toiletries", qty:null, unit:"", notes:"" }
       ]},
-{ id:"health", icon:"💊", title:"Health", subtitle:"Medicine cabinet essentials", items:[
-        { name:"Painkillers", categoryKey:"Toiletries", qty:null, unit:"", notes:"" },
-        { name:"Vitamins", categoryKey:"Toiletries", qty:null, unit:"", notes:"" }
+      { id:"health", icon:"💊", title:"Health", subtitle:"Medicine cabinet essentials", items:[
+        { name:"Painkillers", categoryKey:"Medicine", qty:null, unit:"", notes:"" },
+        { name:"Vitamins", categoryKey:"Medicine", qty:null, unit:"", notes:"" },
+        { name:"First-aid bits", categoryKey:"Household", qty:null, unit:"", notes:"" }
       ]},
       { id:"cleaning", icon:"🧽", title:"Cleaning", subtitle:"The ‘we forgot it’ essentials", items:[
         { name:"Bin bags", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
@@ -3188,12 +3195,13 @@ function openListSettings(list){
         { name:"Carpet cleaner", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
         { name:"Polish", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
         { name:"Air freshener", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" },
-        { name:"Kitchen roll", categoryKey:"Household", qty:null, unit:"", notes:"" }
+        { name:"Fabreze", categoryKey:"Cleaning Products", qty:null, unit:"", notes:"" }
       ]},
-      { id:"kids", icon:"🧸", title:"Kids / Baby", subtitle:"Wipes, bedtime, extras", items:[
+      { id:"kids", icon:"🧸", title:"Kids", subtitle:"Wipes, bedtime, extras", items:[
         { name:"Baby wipes", categoryKey:"Household", qty:null, unit:"", notes:"" },
         { name:"Dry mats (child bed)", categoryKey:"Household", qty:null, unit:"", notes:"" },
-        { name:"Nappies", categoryKey:"Household", qty:null, unit:"", notes:"(if needed)" }
+        { name:"Calpol", categoryKey:"Medicine", qty:null, unit:"", notes:"" },
+        { name:"Bubble Bath", categoryKey:"Toiletries", qty:null, unit:"", notes:"" }
       ]},
       { id:"pets", icon:"🐾", title:"Pets", subtitle:"Food + litter", items:[
         { name:"Cat food", categoryKey:"Pets", qty:null, unit:"", notes:"" },
@@ -3203,8 +3211,8 @@ function openListSettings(list){
       { id:"household", icon:"🏠", title:"Household cupboard", subtitle:"Low-frequency stuff", items:[
         { name:"Light bulbs", categoryKey:"Household", qty:null, unit:"", notes:"" },
         { name:"Batteries", categoryKey:"Household", qty:null, unit:"", notes:"" },
-        { name:"Tissues", categoryKey:"Household", qty:null, unit:"", notes:"" },
-        { name:"First-aid bits", categoryKey:"Household", qty:null, unit:"", notes:"(if needed)" }
+        { name:"Kitchen roll", categoryKey:"Household", qty:null, unit:"", notes:"" },
+        { name:"Tissues", categoryKey:"Household", qty:null, unit:"", notes:"" }
       ]}
     ];
 
@@ -4472,7 +4480,6 @@ async function resetWeeklyShopToTemplate(hid, weeklyListId, weekKey){
           row.innerHTML = `
             <div class="grow">
               <div class="title">${isSelf ? "You" : "Member"} <span class="muted" style="font-weight:700">(${escapeHtml(mRole)})</span></div>
-              <div class="sub">${escapeHtml(m.uid)}</div>
             </div>
             ${role==="owner" && !isSelf ? `<button class="btn danger small" type="button" data-remove>Remove</button>` : ``}
           `;
