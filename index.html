@@ -30,14 +30,20 @@
       --tap: 44px;
     }
     *{box-sizing:border-box}
-    html,body{height:100%}
+    html,body{min-height:100%}
+    html{
+      background: radial-gradient(1200px 800px at 20% -10%, rgba(0,212,255,.18), transparent 55%),
+                  radial-gradient(1200px 800px at 90% 0%, rgba(255,61,127,.18), transparent 60%),
+                  var(--cloud);
+      background-attachment: fixed;
+      background-repeat: no-repeat;
+    }
     body{
       margin:0;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       color:var(--ink);
-      background: radial-gradient(1200px 800px at 20% -10%, rgba(0,212,255,.18), transparent 55%),
-                  radial-gradient(1200px 800px at 90% 0%, rgba(255,61,127,.18), transparent 60%),
-                  var(--cloud);
+      background: transparent;
+      background-color: transparent;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
@@ -312,11 +318,37 @@
     }
   
     /* Household selection + manage */
-    .hhRow{gap:10px}
+    .hhRow{gap:10px; transition: transform .12s ease, background .12s ease, border-color .12s ease, box-shadow .12s ease;}
     .hhRow.selected{
-      outline: 2px solid var(--pink);
-      box-shadow: 0 0 0 6px rgba(255,61,127,.08), var(--shadow);
+      background: linear-gradient(135deg, rgba(255,61,127,.10), rgba(0,212,255,.10));
+      border: 2px solid var(--pink);
+      box-shadow: 0 10px 24px rgba(255,61,127,.14), var(--shadow);
+      transform: scale(1.02);
     }
+    /* Collapsible setup sections (minimised by default) */
+    .setupDetails{
+      border: 1px solid var(--divider);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      margin: 12px 0;
+    }
+    .setupDetails > summary{
+      list-style: none;
+      cursor: pointer;
+      padding: 14px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: linear-gradient(135deg, rgba(255,61,127,.08), rgba(0,212,255,.08));
+    }
+    .setupDetails > summary::-webkit-details-marker{display:none;}
+    .setupDetails[open] > summary{border-bottom: 1px solid var(--divider);}
+    .setupDetails .sumTitle{font-size:15px; font-weight:900; color: var(--pink);}
+    .setupDetails .sumSub{font-size:13px; color: var(--slate);}
+    .setupDetails .detailsBody{padding: 14px;}
+
     .iconBtn{
       width: 40px; height: 40px;
       border-radius: 14px;
@@ -722,27 +754,37 @@
             <div id="setupBlock" class="muted">Select a household to manage setup.</div>
 
             <div id="setupWrap" style="display:none">
-              <div class="h1" style="font-size:15px; color:#FF3D7F;">Categories</div>
-              <div class="muted">Controls the order you’ll see items in Shopping Mode.</div>
-              <div class="sep"></div>
-              <div id="catsWrap" class="list"></div>
-              <div class="sep"></div>
-              <div class="row wrap">
-                <button class="btn secondary" id="btnAddCategory" type="button">Add category</button>
-              </div>
+              <details id="setupCats" class="setupDetails">
+                <summary>
+                  <div class="sumTitle">Categories</div>
+                  <div class="sumSub">Controls the order you’ll see items in Shopping Mode.</div>
+                </summary>
+                <div class="detailsBody">
+                  <div id="catsWrap" class="list"></div>
+                  <div class="sep"></div>
+                  <div class="row wrap">
+                    <button class="btn secondary" id="btnAddCategory" type="button">Add category</button>
+                  </div>
+                </div>
+              </details>
 
-              <div class="sep"></div>
-              <div class="h1" style="font-size:15px; color:#FF3D7F;">Weekly Template</div>
-              <div class="muted">These items come back every week when you reset.</div>
-              <div class="sep"></div>
-              <div id="tplEmpty" class="muted">No template items yet. Add your regulars (e.g., milk, bread).</div>
-              <div id="tplWrap" class="list" style="display:none"></div>
-              <div class="sep"></div>
-              <div class="row wrap">
-                <button class="btn primary" id="btnAddTplItem" type="button">Add template item</button>
-                <button class="btn secondary" id="btnResetWeeklyNow" type="button">Reset weekly shop</button>
-                <button class="btn ghost" id="btnTestWeeklyPrompt" type="button">Test Monday reset prompt</button>
-              </div>
+              <details id="setupTpl" class="setupDetails">
+                <summary>
+                  <div class="sumTitle">Weekly Template</div>
+                  <div class="sumSub">These items come back every week when you reset.</div>
+                </summary>
+                <div class="detailsBody">
+                  <div id="tplEmpty" class="muted">No template items yet. Add your regulars (e.g., milk, bread).</div>
+                  <div id="tplWrap" class="list" style="display:none"></div>
+                  <div class="sep"></div>
+                  <div class="row wrap">
+                    <button class="btn primary" id="btnAddTplItem" type="button">Add template item</button>
+                    <button class="btn secondary" id="btnResetWeeklyNow" type="button">Reset weekly shop</button>
+                    <button class="btn ghost" id="btnTestWeeklyPrompt" type="button">Test Monday reset prompt</button>
+                  </div>
+                </div>
+              </details>
+
             </div>
           </div>
         </div>
