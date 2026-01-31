@@ -4882,23 +4882,34 @@ $("#btnCreateHousehold").addEventListener("click", async ()=>{
               if(!inv.active){ toast("Invite is inactive"); setSync("Sync • Up to date", "good"); return false; }
               const hid = inv.householdId;
 
-              // Create membership + index if missing
+              // Create membership + user index (if missing)
               const batch = writeBatch(db);
 
-              // Member (member role by default; rules will prevent owner self-downgrade)
-              batch.set(doc(db, "households", hid, "members", state.user.uid), {
-                uid: state.user.uid,
-                role: "member",
-                joinedAt: serverTimestamp()
-              }, { merge: true });
+              const memRef = doc(db, "households", hid, "members", state.user.uid);
+              let existingRole = "member";
 
-              // Set household name optimistically (can't read /households/{hid} until membership exists)
+              // NOTE: Under our rules, a signed-in user can read ONLY their own member doc
+              // (even before joining) so we can safely pre-check without leaking other members.
+              const memSnap = await getDoc(memRef);
+              if(memSnap.exists()){
+                existingRole = memSnap.data()?.role || "member";
+              }else{
+                // Join via invite: create member record (must include inviteCode for hardened rules)
+                batch.set(memRef, {
+                  uid: state.user.uid,
+                  role: "member",
+                  joinedAt: serverTimestamp(),
+                  inviteCode: code
+                }, { merge: true });
+              }
+
+              // Set household name optimistically (can't reliably read /households/{hid} until membership exists)
               const hhName = (inv.householdName || inv.name || "Household");
 
               batch.set(doc(db, "users", state.user.uid, "households", hid), {
                 householdId: hid,
                 householdName: hhName,
-                role: "member",
+                role: existingRole,
                 joinedAt: serverTimestamp()
               }, { merge: true });
 
