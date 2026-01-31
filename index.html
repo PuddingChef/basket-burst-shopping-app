@@ -334,6 +334,9 @@
     /* Forms (used heavily in modals) */
     .field{display:flex; flex-direction:column; gap:6px; margin:10px 0}
     .field label{font-size:12px; font-weight:900; color: var(--text2)}
+    .pwrow{display:flex; gap:10px; align-items:center}
+    .pwrow input{flex:1}
+    .pwrow .btn{min-width:44px; height:44px; padding:0 10px}
     .grid2{display:grid; grid-template-columns:1fr 1fr; gap:12px}
     @media (max-width: 420px){ .grid2{grid-template-columns:1fr} }
     input, textarea{
@@ -466,7 +469,7 @@
           <div class="sep"></div>
           <div class="row wrap">
             <button class="btn primary" id="btnNewList" type="button">New list</button>
-            <button class="btn secondary" id="btnOpenWeekly" type="button">Start Your Weekly shop</button>
+            <button class="btn secondary" id="btnOpenWeekly" type="button">Start your weekly shop</button>
             <button class="btn ghost" id="btnToggleArchivedLists" type="button">Show archived</button>
           </div>
         </div>
@@ -539,7 +542,7 @@
             <div class="sep"></div>
             <div class="row" style="gap:10px; justify-content:flex-end">
               <button class="btn secondary" id="btnClearWeek" type="button">Clear week</button>
-              <button class="btn primary" id="btnAddWeekToShop" type="button">Add Weekly Shop</button>
+              <button class="btn primary" id="btnAddWeekToShop" type="button">Add to weekly shop</button>
             </div>
           
           </div>
@@ -660,9 +663,30 @@
           <div class="sep"></div>
 
           <div id="signedOutBlock">
-            <button class="btn primary" id="btnGoogle" type="button">
+                      <button class="btn primary" id="btnGoogle" type="button">
               <span>Continue with Google</span>
             </button>
+
+            <div class="sep"></div>
+
+            <div class="field">
+              <label>Email</label>
+              <input id="authEmail" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
+            </div>
+
+            <div class="field">
+              <label>Password</label>
+              <div class="pwrow">
+                <input id="authPass" type="password" autocomplete="current-password" placeholder="••••••••" />
+                <button class="btn ghost small" id="btnTogglePass" type="button" aria-label="Show password">👁</button>
+              </div>
+            </div>
+
+            <div class="grid3">
+              <button class="btn primary" id="btnEmailSignIn" type="button">Sign in</button>
+              <button class="btn secondary" id="btnEmailSignUp" type="button">Create account</button>
+              <button class="btn danger" id="btnResetPass" type="button" style="margin-top:10px">Reset password</button>
+            </div>
           </div>
 
           <div id="signedInBlock" style="display:none">
@@ -715,9 +739,9 @@
               <div id="tplWrap" class="list" style="display:none"></div>
               <div class="sep"></div>
               <div class="row wrap">
-                <button class="btn primary" id="btnAddTplItem" type="button">Add Template Item</button>
-                <button class="btn secondary" id="btnResetWeeklyNow" type="button">Reset Weekly Shop</button>
-                <button class="btn ghost" id="btnTestWeeklyPrompt" type="button">Test Monday Reset Prompt</button>
+                <button class="btn primary" id="btnAddTplItem" type="button">Add template item</button>
+                <button class="btn secondary" id="btnResetWeeklyNow" type="button">Reset weekly shop</button>
+                <button class="btn ghost" id="btnTestWeeklyPrompt" type="button">Test Monday reset prompt</button>
               </div>
             </div>
           </div>
@@ -797,7 +821,7 @@
     // Firebase (modular SDK)
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import {
-      getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut
+      getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import {
       getFirestore, doc, getDoc, setDoc, addDoc, collection, serverTimestamp,
@@ -970,19 +994,36 @@ async function confirmModal({title="Confirm", message="", confirmLabel="OK", can
     $("#modalBackdrop").addEventListener("click", (e)=>{ if(e.target.id==="modalBackdrop") hideModal(); });
 
     // Tabs
-    function setTab(name){
-      $$(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
-      $$(".panel").forEach(p=>p.classList.remove("active"));
-      $("#panel-"+name).classList.add("active");
-      if(name==="build") renderBuild();
-        try{ renderShop(); }catch{}
-      if(name==="meals"){ attachMealsListeners(); renderMeals(); }
-      if(name==="shop"){ renderShop(); }
-    }
-    $$(".tab").forEach(t=> t.addEventListener("click", ()=> setTab(t.dataset.tab)));
+function setTab(name, opts={}){
+  const force = !!opts.force;
 
-    // === App state ===
+  // Gate navigation when signed out: keep user on Account panel
+  if(!force && !state.user && name !== "account"){
+    state.pendingTab = name;
+    const now = Date.now();
+    if(now - (state.lastAuthToastAt||0) > 1200){
+      state.lastAuthToastAt = now;
+      toast("Please sign in to continue.");
+    }
+    name = "account";
+  }
+
+  $$(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
+  $$(".panel").forEach(p=>p.classList.remove("active"));
+  $("#panel-"+name).classList.add("active");
+
+  if(name==="lists"){ renderLists(); }
+  if(name==="build"){ renderBuild(); }
+  if(name==="shop"){ renderShop(); }
+  if(name==="meals"){ attachMealsListeners(); renderMeals(); }
+  // account panel doesn't require a render step
+}
+$$(".tab").forEach(t=> t.addEventListener("click", ()=> setTab(t.dataset.tab)));
+
+// === App state ===
     const state = {
+      pendingTab: null,
+      lastAuthToastAt: 0,
       user: null,
       households: [], // from users/{uid}/households
       selectedHouseholdId: localStorage.getItem("bb.selectedHouseholdId") || null,
@@ -1077,6 +1118,64 @@ lastFocusEl: null,
       setSync("Sync • Signing in…", "warn");
       await signInWithPopup(auth, provider);
     });
+
+    // Email/password auth (optional alternative to Google sign-in)
+    const authEmail = $("#authEmail");
+    const authPass = $("#authPass");
+
+    function normEmail(v){ return (v||"").trim().toLowerCase(); }
+
+    $("#btnTogglePass")?.addEventListener("click", ()=>{
+      const isPw = authPass.type === "password";
+      authPass.type = isPw ? "text" : "password";
+      $("#btnTogglePass").textContent = isPw ? "🙈" : "👁";
+      $("#btnTogglePass").setAttribute("aria-label", isPw ? "Hide password" : "Show password");
+      authPass.focus();
+    });
+
+    $("#btnEmailSignIn")?.addEventListener("click", async ()=>{
+      const email = normEmail(authEmail.value);
+      const pass = authPass.value || "";
+      if(!email){ toast("Enter your email address."); authEmail.focus(); return; }
+      if(!pass){ toast("Enter your password."); authPass.focus(); return; }
+      try{
+        setSync("Sync • Signing in…", "warn");
+        await signInWithEmailAndPassword(auth, email, pass);
+      }catch(e){
+        console.error(e);
+        toast((e?.message || "Sign in failed.").replace("Firebase: ", ""));
+        setSync("Sync • Not signed in", "warn");
+      }
+    });
+
+    $("#btnEmailSignUp")?.addEventListener("click", async ()=>{
+      const email = normEmail(authEmail.value);
+      const pass = authPass.value || "";
+      if(!email){ toast("Enter your email address."); authEmail.focus(); return; }
+      if(pass.length < 6){ toast("Password must be at least 6 characters."); authPass.focus(); return; }
+      try{
+        setSync("Sync • Creating account…", "warn");
+        await createUserWithEmailAndPassword(auth, email, pass);
+        toast("Account created.");
+      }catch(e){
+        console.error(e);
+        toast((e?.message || "Create account failed.").replace("Firebase: ", ""));
+        setSync("Sync • Not signed in", "warn");
+      }
+    });
+
+    $("#btnResetPass")?.addEventListener("click", async ()=>{
+      const email = normEmail(authEmail.value);
+      if(!email){ toast("Enter your email first."); authEmail.focus(); return; }
+      try{
+        await sendPasswordResetEmail(auth, email);
+        toast("Password reset email sent.");
+      }catch(e){
+        console.error(e);
+        toast((e?.message || "Password reset failed.").replace("Firebase: ", ""));
+      }
+    });
+
 
     $("#btnSignOut").addEventListener("click", async ()=>{
       await signOut(auth);
@@ -3570,7 +3669,7 @@ function openListSettings(list){
             </div>
             <div class="row mealActions">
               <button class="btn secondary small" type="button" data-add-week aria-label="Add to week"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h1V3a1 1 0 0 1 1-1Zm12 8H5v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9ZM6 6a1 1 0 0 0-1 1v1h14V7a1 1 0 0 0-1-1H6Z"/></svg></button>
-              <button class="btn primary small" type="button" data-add-shop>Add to list</button>
+              <button class="btn primary small" type="button" data-add-shop>+ weekly shop</button>
               <button class="iconBtn" type="button" data-edit aria-label="Edit">✎</button>
               <button class="btn danger small" type="button" data-del aria-label="Delete">×</button>
             </div>
@@ -4944,6 +5043,7 @@ function startHouseholdsListener(uid){
         $("#listsEmpty").textContent = "Select a household to get started.";
         $("#listsWrap").style.display = "none";
         $("#listsEmpty").style.display = "block";
+        setTab("account", {force:true});
         return;
       }
 
@@ -4954,6 +5054,9 @@ function startHouseholdsListener(uid){
 
       setSync("Sync • Loading…", "warn");
       startHouseholdsListener(user.uid);
+      const pending = state.pendingTab;
+      if(pending){ state.pendingTab = null; setTab(pending, {force:true}); }
+      else { setTab("lists", {force:true}); }
     });
 
     // Initial default tab
