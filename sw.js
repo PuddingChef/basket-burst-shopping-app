@@ -1,4 +1,4 @@
-const CACHE = "basketburst-v18";
+const CACHE = "basketburst-v19";
 const ASSETS = [
   "./",
   "./index.html",
