@@ -254,7 +254,7 @@
       align-items:flex-end;
       justify-content:center;
       padding: 18px 14px calc(18px + var(--safe-b));
-      z-index: 40;
+      z-index: 200;
     }
     .modal-backdrop.show{display:flex}
     .modal{
@@ -362,6 +362,34 @@
     }
     .iconBtn:active{transform: scale(.96)}
     .iconBtn svg{width:18px;height:18px}
+    /* Floating action buttons */
+    .fab{
+      position: fixed;
+      right: 16px;
+      bottom: calc(76px + env(safe-area-inset-bottom));
+      width: 54px;
+      height: 54px;
+      border-radius: 18px;
+      border: none;
+      background: linear-gradient(135deg, var(--pink), var(--purple));
+      color: #fff;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 14px 34px rgba(108,43,255,.25), 0 10px 20px rgba(0,0,0,.10);
+      cursor: pointer;
+      z-index: 60;
+      transform: translateZ(0);
+    }
+    .fab:active{ transform: scale(.97); }
+    .fab svg{ width: 24px; height: 24px; }
+    .fab.shop{
+      width: 50px;
+      height: 50px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(0,212,255,1), rgba(108,43,255,1));
+    }
+
 
     /* Forms (used heavily in modals) */
     .field{display:flex; flex-direction:column; gap:6px; margin:10px 0}
@@ -370,7 +398,7 @@
     .pwrow input{flex:1}
     .pwrow .btn{min-width:44px; height:44px; padding:0 10px}
     .grid2{display:grid; grid-template-columns:1fr 1fr; gap:12px}
-    @media (max-width: 420px){ .grid2{grid-template-columns:1fr} }
+    @media (max-width: 420px){ .grid2:not(.force2){grid-template-columns:1fr} }
     input, textarea{
       width:100%;
       border-radius: 14px;
@@ -522,22 +550,21 @@
                 <div class="h1" style="font-size:16px; margin:0">Current list</div>
                 <div id="buildCurrentList" class="muted" style="margin-top:6px">—</div>
               </div>
-              <button class="btn primary" id="btnAddItem" type="button">Add item</button>
+              <button class="btn secondary" id="btnResetWeeklyBuild" type="button" style="display:none">Reset weekly shop</button>
             </div>
 
             <div class="sep"></div>
 
 
-            <div class="card" id="buildPromptsCard" style="display:none">
-              <div class="row" style="align-items:flex-start">
-                <div class="grow">
-                  <div class="h1" style="font-size:16px; margin:0">Quick checks</div>
-                  <div class="muted" style="margin-top:6px">Tap a room and add the bits people forget — make list-building feel lighter.</div>
-                </div>
+            <details class="setupDetails" id="buildPromptsCard" style="display:none">
+              <summary>
+                <div class="sumTitle">Quick checks</div>
+                <div class="sumSub">Tap a room and add the bits people forget — make list-building feel lighter.</div>
+              </summary>
+              <div class="detailsBody">
+                <div id="promptGrid" class="promptGrid"></div>
               </div>
-              <div class="sep"></div>
-              <div id="promptGrid" class="promptGrid"></div>
-            </div>
+            </details>
 
             <div class="row wrap" style="justify-content:space-between">
               <div class="muted">Items</div>
@@ -623,7 +650,7 @@
 
             <div class="sep"></div>
 
-            <div class="grid2">
+            <div class="grid2 force2">
               <div class="card" style="padding:10px">
                 <div class="muted" style="font-weight:800">Basket total</div>
                 <div class="h1" id="shopBasketTotal" style="margin-top:4px">£0.00</div>
@@ -642,8 +669,7 @@
               <button class="btn primary" id="btnStartShop" type="button">Start shop</button>
               <button class="btn primary" id="btnCompleteShop" type="button" style="display:none">Complete shop</button>
               <button class="btn danger" id="btnResetShop" type="button" style="display:none">Reset shop</button>
-              <button class="btn secondary" id="btnQuickAddShop" type="button">Quick add</button>
-              <button class="btn ghost" id="btnShopTogglePicked" type="button">Show picked</button>
+<button class="btn ghost" id="btnShopTogglePicked" type="button">Show picked</button>
                           <button class="btn ghost" id="btnShopHistory" type="button">Previous shops</button>
             </div>
           </div>
@@ -784,7 +810,21 @@
                   </div>
                 </div>
               </details>
-
+              <details id="setupPrompts" class="setupDetails">
+                <summary>
+                  <div class="sumTitle">Quick checks prompts</div>
+                  <div class="sumSub">Customise the room prompts shown in Weekly Shop → Build.</div>
+                </summary>
+                <div class="detailsBody">
+                  <div id="promptsEmpty" class="muted">Using default prompts. Edit to personalise your checks.</div>
+                  <div id="promptsWrap" class="list" style="display:none"></div>
+                  <div class="sep"></div>
+                  <div class="row wrap">
+                    <button class="btn secondary" id="btnAddPromptSection" type="button">Add section</button>
+                    <button class="btn ghost" id="btnResetPromptsDefault" type="button">Reset to defaults</button>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         </div>
@@ -1053,16 +1093,33 @@ function setTab(name, opts={}){
   $$(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
   $$(".panel").forEach(p=>p.classList.remove("active"));
   $("#panel-"+name).classList.add("active");
+  state.currentTab = name;
 
   if(name==="lists"){ renderLists(); }
   if(name==="build"){ renderBuild(); }
   if(name==="shop"){ renderShop(); }
   if(name==="meals"){ attachMealsListeners(); renderMeals(); }
   // account panel doesn't require a render step
+  updateFabs();
 }
 $$(".tab").forEach(t=> t.addEventListener("click", ()=> setTab(t.dataset.tab)));
 
-// === App state ===
+function updateFabs(){
+  const fabAdd = $("#fabAddItem");
+  const fabShop = $("#fabQuickAddShop");
+  const tab = state.currentTab || "account";
+
+  if(fabAdd){
+    const show = tab==="build" && !!getCurrentList() && !!state.selectedHouseholdId && !!state.user;
+    fabAdd.style.display = show ? "flex" : "none";
+  }
+  if(fabShop){
+    const show = tab==="shop" && !!getCurrentList() && !!state.selectedHouseholdId && !!state.user;
+    fabShop.style.display = show ? "flex" : "none";
+  }
+}
+
+ // === App state ===
     const state = {
       pendingTab: null,
       lastAuthToastAt: 0,
@@ -1860,6 +1917,8 @@ row.querySelector("[data-skip]")?.addEventListener("click", async (e)=>{
       return d.toLocaleString(undefined, { weekday:"short", day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" });
     }
 
+   
+  updateFabs();
     async function loadShopHistory(){
       if(!guardHousehold()) return [];
       try{
@@ -2326,12 +2385,8 @@ async function openShopPickModal(it, opts={}){
         title: "Quick add",
         body: `
           <div class="field"><label>Item name</label><input id="qaName" placeholder="e.g. Milk" /></div>
-          <div class="grid2">
-            <div class="field"><label>Quantity</label><input id="qaQty" type="number" inputmode="decimal" placeholder="e.g. 1" /></div>
-            <div class="field"><label>Unit</label><input id="qaUnit" placeholder="e.g. bottles" /></div>
-          </div>
           <div class="field"><label>Category</label><select id="qaCat">${catOptions}</select></div>
-          <div class="field"><label>Notes (optional)</label><textarea id="qaNotes" placeholder="e.g. Semi-skimmed"></textarea></div>
+          <div class="muted" style="margin-top:8px">Tip: “Add & pick” lets you enter price/quantity right away.</div>
         `,
         footerButtons: [
           { label: "Cancel", className: "ghost" },
@@ -2341,15 +2396,11 @@ async function openShopPickModal(it, opts={}){
             onClick: async ()=>{
               const name = ($("#qaName").value||"").trim();
               if(!name) { toast("Enter an item name"); return false; }
-              const qtyRaw = ($("#qaQty").value||"").trim();
-              const qty = qtyRaw==="" ? null : Number(qtyRaw);
-              const unit = ($("#qaUnit").value||"").trim();
               const catId = ($("#qaCat").value||"") || null;
-              const notes = ($("#qaNotes").value||"").trim();
 
               setSync("Sync • Adding…", "warn");
               await addDoc(collection(db, "households", state.selectedHouseholdId, "lists", cur.id, "items"), {
-                name, qty: Number.isFinite(qty) ? qty : null, unit, categoryId: catId, notes,
+                name, qty: null, unit: "", categoryId: catId, notes: "",
                 picked: false,
                 createdAt: serverTimestamp(),
                 createdByUid: state.user.uid,
@@ -2366,15 +2417,11 @@ async function openShopPickModal(it, opts={}){
             onClick: async ()=>{
               const name = ($("#qaName").value||"").trim();
               if(!name) { toast("Enter an item name"); return false; }
-              const qtyRaw = ($("#qaQty").value||"").trim();
-              const qty = qtyRaw==="" ? null : Number(qtyRaw);
-              const unit = ($("#qaUnit").value||"").trim();
               const catId = ($("#qaCat").value||"") || null;
-              const notes = ($("#qaNotes").value||"").trim();
 
               setSync("Sync • Adding…", "warn");
               const newRef = await addDoc(collection(db, "households", state.selectedHouseholdId, "lists", cur.id, "items"), {
-                name, qty: Number.isFinite(qty) ? qty : null, unit, categoryId: catId, notes,
+                name, qty: null, unit: "", categoryId: catId, notes: "",
                 picked: false,
                 createdAt: serverTimestamp(),
                 createdByUid: state.user.uid,
@@ -2382,10 +2429,9 @@ async function openShopPickModal(it, opts={}){
                 updatedByUid: state.user.uid
               });
               setSync("Sync • Up to date", "good");
-              // Wait for snapshot to include it, then open pick modal with minimal item object
               hideModal();
-              openShopPickModal({ id: newRef.id, name, qty, unit, notes, categoryId: catId, mealTags: [], picked:false });
-              return false; // keep modal closed already
+              openShopPickModal({ id: newRef.id, name, qty: null, unit: "", notes: "", categoryId: catId, mealTags: [], picked:false });
+              return false;
             }
           }
         ]
@@ -2423,6 +2469,11 @@ function renderMealTags(it){
       if(promptsCard){
         promptsCard.style.display = isWeeklyShopList(cur) ? "" : "none";
       }
+      const resetWeeklyBtn = $("#btnResetWeeklyBuild");
+      if(resetWeeklyBtn){
+        resetWeeklyBtn.style.display = (cur && isWeeklyShopList(cur)) ? "" : "none";
+      }
+
       if(!cur){
         empty.style.display = "block";
         empty.textContent = "Select a list in the Lists tab to start building.";
@@ -2760,6 +2811,38 @@ function renderSetup(){
       tplWrap.appendChild(row);
     }
   }
+  updateFabs();
+
+  // Quick checks prompts setup
+  const promptsWrap = $("#promptsWrap");
+  const promptsEmpty = $("#promptsEmpty");
+  const prompts = getEffectiveRoomPrompts();
+  if(promptsWrap && promptsEmpty){
+    promptsWrap.innerHTML = "";
+    if(!Array.isArray(prompts) || !prompts.length){
+      promptsEmpty.style.display = "block";
+      promptsWrap.style.display = "none";
+    }else{
+      promptsEmpty.style.display = state.config?.roomPrompts ? "none" : "block";
+      promptsWrap.style.display = "flex";
+      prompts.forEach((sec, i)=>{
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `
+          <div class="grow">
+            <div class="title">${escapeHtml((sec.icon||"✨")+" "+(sec.title||"Section"))}</div>
+            <div class="sub">${escapeHtml(sec.subtitle||"")} ${sec.items?.length ? "• "+sec.items.length+" items" : ""}</div>
+          </div>
+          <button class="btn secondary small" type="button" data-edit="${i}">✎</button>
+          <button class="btn danger small" type="button" data-del="${i}">×</button>
+        `;
+        row.querySelector("[data-edit]")?.addEventListener("click", ()=> openPromptSectionModal(i));
+        row.querySelector("[data-del]")?.addEventListener("click", ()=> deletePromptSection(i));
+        promptsWrap.appendChild(row);
+      });
+    }
+  }
+
 }
     async function openEditBuildItemModal(it){
       const cur = getCurrentList();
@@ -3087,12 +3170,23 @@ $("#btnNewList").addEventListener("click", async ()=>{
     });
 
     // Build tab
-    $("#btnAddItem")?.addEventListener("click", async ()=>{
+    $("#fabAddItem")?.addEventListener("click", async ()=>{
       if(!guardHousehold()) return;
       await openAddItemModal();
     });
 
-    $("#btnTogglePicked")?.addEventListener("click", ()=>{
+    $("#btnResetWeeklyBuild")?.addEventListener("click", async ()=>{
+      if(!guardHousehold()) return;
+      const cur = getCurrentList();
+      if(!cur || !isWeeklyShopList(cur)){ toast("Weekly Shop only"); return; }
+      const ok = await confirmModal({title:"Reset Weekly Shop", message:"Reset Weekly Shop back to your template? This will clear current items and restore your template items.", confirmLabel:"Reset", cancelLabel:"Cancel", confirmClass:"warn"});
+      if(!ok) return;
+      await resetWeeklyShopToTemplate(state.selectedHouseholdId, cur.id, weekKeyNow());
+      toast("Weekly Shop reset");
+      try{ renderBuild(); }catch{}
+      try{ renderShop(); }catch{}
+    });
+$("#btnTogglePicked")?.addEventListener("click", ()=>{
       state.showPicked = !state.showPicked;
       renderBuild();
     });
@@ -3116,6 +3210,10 @@ $("#btnNewList").addEventListener("click", async ()=>{
     $("#btnQuickAddShop")?.addEventListener("click", async ()=>{
       await openQuickAddShopModal();
     });
+    $("#fabQuickAddShop")?.addEventListener("click", async ()=>{
+      await openQuickAddShopModal();
+    });
+
     $("#btnShopTogglePicked")?.addEventListener("click", ()=>{
       state.shopShowPicked = !state.shopShowPicked;
       localStorage.setItem("bb.shopShowPicked", state.shopShowPicked ? "1" : "0");
@@ -3359,6 +3457,134 @@ function openListSettings(list){
     ];
 
 
+    function deepClone(obj){
+      try{ return JSON.parse(JSON.stringify(obj)); }catch{ return obj; }
+    }
+
+    function getEffectiveRoomPrompts(){
+      const rp = state.config?.roomPrompts;
+      return Array.isArray(rp) && rp.length ? rp : ROOM_PROMPTS;
+    }
+
+    async function saveRoomPrompts(nextPrompts){
+      if(!guardHousehold()) return;
+      const hid = state.selectedHouseholdId;
+      const cfgRef = doc(db, "households", hid, "settings", "config");
+      const merged = {
+        ...((state.config)||{}),
+        roomPrompts: nextPrompts,
+        updatedAt: serverTimestamp(),
+        updatedByUid: state.user.uid
+      };
+      state.config = merged;
+      setSync("Sync • Saving…", "warn");
+      await setDoc(cfgRef, merged, {merge:true});
+      setSync("Sync • Up to date", "good");
+      try{ renderSetup(); }catch{}
+      try{ renderBuildPrompts(); }catch{}
+    }
+
+    async function deletePromptSection(i){
+      const cur = getEffectiveRoomPrompts();
+      if(!Array.isArray(cur) || !cur[i]) return;
+      const ok = await confirmModal({title:"Delete section", message:"Delete this quick-check section?", confirmLabel:"Delete", cancelLabel:"Cancel", confirmClass:"danger"});
+      if(!ok) return;
+      const next = deepClone(cur);
+      next.splice(i,1);
+      await saveRoomPrompts(next);
+      toast("Section deleted");
+    }
+
+    async function openPromptSectionModal(indexOrNull){
+      const base = getEffectiveRoomPrompts();
+      const isNew = indexOrNull==null;
+      const sec = isNew ? { id: crypto.randomUUID?.() || String(Date.now()), icon:"🧺", title:"New section", subtitle:"", items:[] } : deepClone(base[indexOrNull]);
+
+      const cats = (state.categories||[]).slice();
+      const catOptions = [`<option value="">Uncategorised</option>`]
+        .concat(cats.map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`))
+        .join("");
+
+      showModal({
+        title: isNew ? "Add quick-check section" : "Edit quick-check section",
+        body: `
+          <div class="grid2">
+            <div class="field"><label>Icon</label><input id="psIcon" value="${escapeHtml(sec.icon||"")}" placeholder="e.g. 🧼" /></div>
+            <div class="field"><label>Title</label><input id="psTitle" value="${escapeHtml(sec.title||"")}" placeholder="e.g. Bathroom" /></div>
+          </div>
+          <div class="field"><label>Subtitle (optional)</label><input id="psSub" value="${escapeHtml(sec.subtitle||"")}" placeholder="e.g. Things you forget" /></div>
+
+          <div class="sep"></div>
+          <div class="row" style="align-items:center; justify-content:space-between">
+            <div class="h1" style="font-size:14px; margin:0">Items</div>
+            <button class="btn secondary small" id="psAddItem" type="button">+ Add item</button>
+          </div>
+          <div id="psItems" class="list" style="margin-top:10px"></div>
+          <div class="muted" style="margin-top:8px">Tip: set a category so added items land in the right aisle.</div>
+        `,
+        footerButtons: [
+          { label:"Cancel", className:"ghost" },
+          {
+            label:"Save",
+            className:"primary",
+            onClick: async ()=>{
+              sec.icon = ($("#psIcon").value||"").trim() || "✨";
+              sec.title = ($("#psTitle").value||"").trim() || "Section";
+              sec.subtitle = ($("#psSub").value||"").trim();
+              const rows = Array.from($$("#psItems .item"));
+              const items = [];
+              for(const row of rows){
+                const name = (row.querySelector("input[data-name]")?.value||"").trim();
+                const catKey = (row.querySelector("select[data-cat]")?.value||"").trim();
+                if(!name) continue;
+                items.push({ name, categoryKey: catKey||"Uncategorised", qty:null, unit:"", notes:"" });
+              }
+              sec.items = items;
+
+              const next = deepClone(base);
+              if(isNew) next.push(sec);
+              else next[indexOrNull] = sec;
+
+              await saveRoomPrompts(next);
+              toast("Saved");
+            }
+          }
+        ]
+      });
+
+      const itemsWrap = $("#psItems");
+      function addRow(item){
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `
+          <div class="grow">
+            <div class="field" style="margin:0">
+              <label style="display:none">Item</label>
+              <input data-name placeholder="e.g. Toilet roll" value="${escapeHtml(item?.name||"")}" />
+            </div>
+            <div class="field" style="margin-top:8px">
+              <label style="display:none">Category</label>
+              <select data-cat>${catOptions}</select>
+            </div>
+          </div>
+          <button class="btn danger small" type="button" data-del>×</button>
+        `;
+        const sel = row.querySelector("select[data-cat]");
+        if(sel){
+          sel.value = (item?.categoryKey||"") || "";
+        }
+        row.querySelector("[data-del]")?.addEventListener("click", ()=> row.remove());
+        itemsWrap.appendChild(row);
+      }
+
+      (sec.items||[]).forEach(it=> addRow(it));
+      $("#psAddItem")?.addEventListener("click", ()=> addRow({name:"", categoryKey:""}));
+      setTimeout(()=>{ try{ $("#psTitle").focus(); }catch{} }, 60);
+    }
+
+
+
+
     function categoryIdFromKey(key){
       const k = String(key||"").trim().toLowerCase();
       // Try exact name match first
@@ -3384,7 +3610,7 @@ function openListSettings(list){
       }
       card.style.display = "block";
       grid.innerHTML = "";
-      for(const r of ROOM_PROMPTS){
+      for(const r of getEffectiveRoomPrompts()){
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "promptCard";
@@ -4798,6 +5024,19 @@ $("#btnTestWeeklyPrompt")?.addEventListener("click", async ()=>{
 });
 
 
+$("#btnAddPromptSection")?.addEventListener("click", ()=>{
+  if(!guardHousehold()) return;
+  openPromptSectionModal(null);
+});
+
+$("#btnResetPromptsDefault")?.addEventListener("click", async ()=>{
+  if(!guardHousehold()) return;
+  const ok = await confirmModal({title:"Reset quick checks", message:"Reset quick checks to the default BasketBurst prompts? Your custom prompts will be overwritten.", confirmLabel:"Reset", cancelLabel:"Cancel", confirmClass:"warn"});
+  if(!ok) return;
+  await saveRoomPrompts(deepClone(ROOM_PROMPTS));
+  toast("Quick checks reset");
+});
+
 $("#btnCreateHousehold").addEventListener("click", async ()=>{
       const body = document.createElement("div");
       body.innerHTML = `
@@ -5116,5 +5355,20 @@ function startHouseholdsListener(uid){
     setTab("lists");
 
   </script>
+
+  <!-- Floating actions -->
+  <button id="fabAddItem" class="fab" type="button" aria-label="Add item">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>
+  </button>
+
+  <button id="fabQuickAddShop" class="fab shop" type="button" aria-label="Quick add">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+</svg>
+  </button>
+
+
 </body>
 </html>
