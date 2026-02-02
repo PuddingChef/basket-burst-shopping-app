@@ -1,2 +1,2 @@
 # basket-burst-shopping-app
-A list building and shopping support app for families
+A list building and shopping support app for families 
