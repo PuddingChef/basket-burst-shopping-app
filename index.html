@@ -325,6 +325,48 @@
       box-shadow: 0 10px 24px rgba(255,61,127,.14), var(--shadow);
       transform: scale(1.02);
     }
+
+    /* Lists: make selected list card expand into a 2-row layout */
+    .listCard.big{
+      flex-wrap: wrap;
+      align-items: flex-start;
+      padding-top: 14px;
+      padding-bottom: 14px;
+      transform: scale(1.03);
+    }
+    .listCard.big .grow{ flex: 1 1 100%; }
+    .listCard.big .listActions{
+      display:flex;
+      gap:10px;
+      width:100%;
+      justify-content:flex-end;
+      margin-top:10px;
+    }
+    /* Lists: background artwork for expanded cards (selected only) */
+    .listCard.big.bg-weekly,
+    .listCard.big.bg-custom{
+      position: relative;
+      overflow: hidden;
+    }
+    .listCard.big.bg-weekly::before,
+    .listCard.big.bg-custom::before{
+      content:"";
+      position:absolute;
+      inset:0;
+      background-size: cover;
+      background-position: center;
+      opacity: .22;
+      pointer-events:none;
+    }
+    .listCard.big.bg-weekly::before{ background-image: url("icons/weekly_shop.png"); }
+    .listCard.big.bg-custom::before{ background-image: url("icons/custom_list.png"); }
+    .listCard.big.bg-weekly > *,
+    .listCard.big.bg-custom > *{
+      position: relative;
+      z-index: 1;
+    }
+
+    .actionBtn svg{ width:22px; height:22px; display:block; }
     /* Collapsible setup sections (minimised by default) */
     .setupDetails{
       border: 1px solid var(--divider);
@@ -487,7 +529,20 @@
     .promptMeta .psub{font-size:12.5px; color: var(--slate); margin-top:2px}
     .btnIconOnly{padding: 10px 12px}
 
-  </style>
+  
+    /* Shop budget feedback */
+    #shopBasketTotal.overBudget{ color: var(--danger); }
+
+    .swapSel{ outline:2px dashed var(--mango); outline-offset:2px; }
+
+.tappable{cursor:pointer}
+
+/* Meal planner header tweaks */
+.mealsHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.mealsHead .mhText{flex:1;min-width:0}
+.bb-weekpill{display:inline-flex;margin-top:6px;cursor:pointer}
+
+</style>
 </head>
 <body>
   <div class="app">
@@ -568,7 +623,10 @@
 
             <div class="row wrap" style="justify-content:space-between">
               <div class="muted">Items</div>
-              <button class="btn ghost" id="btnTogglePicked" type="button">Show picked</button>
+              <div class="row" style="gap:8px; justify-content:flex-end; align-items:center">
+                <button class="btn primary" id="btnSetBudget" type="button">Set budget</button>
+                <button class="btn secondary" id="btnTogglePicked" type="button">Show picked</button>
+              </div>
             </div>
             <div class="sep"></div>
 
@@ -581,14 +639,18 @@
       <!-- MEALS -->
       <section id="panel-meals" class="panel">
         <div class="card">
-          <div class="row" style="align-items:flex-end">
+          <div class="row" style="align-items:flex-start">
             <div class="grow">
-              <div class="h1">Next week</div>
-              <div class="muted">Evening meals (Mon–Sun), planned ahead.</div>
-            </div>
-            <div class="row" style="gap:8px; align-items:center; justify-content:flex-end">
-              <button class="btn danger small" id="btnTogglePlanner" type="button" aria-label="Minimise planner">–</button>
-              <div class="badge" id="mealsWeekKey">—</div>
+              <div class="row" style="justify-content:space-between; align-items:flex-start; gap:10px">
+                <div class="grow">
+                  <div class="h1">Meal Planner</div>
+                  <div class="muted">Evening meals (Mon–Sun). Tap the date to toggle between this week and next week.</div>
+                  <div style="margin-top:8px">
+                    <div class="mealsHead badge" id="mealsWeekKey">—</div>
+                  </div>
+                </div>
+                <button class="btn secondary small" id="btnTogglePlanner" type="button" aria-label="Minimise planner">–</button>
+              </div>
             </div>
           </div>
           <div class="sep"></div>
@@ -648,6 +710,13 @@
               <div class="pill" id="shopStatusPill">Not started</div>
             </div>
 
+            <div class="row between" style="align-items:center; gap:10px">
+              <label class="row" style="gap:10px; align-items:center; user-select:none">
+                <input id="chkVoucher" type="checkbox" style="width:18px;height:18px">
+                <span class="muted" style="font-weight:800">Voucher for next shop</span>
+              </label>
+            </div>
+
             <div class="sep"></div>
 
             <div class="grid2 force2">
@@ -655,6 +724,7 @@
                 <div class="muted" style="font-weight:800">Basket total</div>
                 <div class="h1" id="shopBasketTotal" style="margin-top:4px">£0.00</div>
                 <div class="muted" id="shopUnpriced" style="margin-top:2px"></div>
+                <div class="muted" id="shopBudgetLine" style="margin-top:6px; display:none"></div>
               </div>
               <div class="card" style="padding:10px">
                 <div class="muted" style="font-weight:800">Shop time</div>
@@ -669,7 +739,7 @@
               <button class="btn primary" id="btnStartShop" type="button">Start shop</button>
               <button class="btn primary" id="btnCompleteShop" type="button" style="display:none">Complete shop</button>
               <button class="btn danger" id="btnResetShop" type="button" style="display:none">Reset shop</button>
-<button class="btn ghost" id="btnShopTogglePicked" type="button">Show picked</button>
+              <button class="btn secondary" id="btnShopTogglePicked" type="button">Show picked</button>
                           <button class="btn ghost" id="btnShopHistory" type="button">Previous shops</button>
             </div>
           </div>
@@ -1072,6 +1142,20 @@ async function confirmModal({title="Confirm", message="", confirmLabel="OK", can
       });
     }
 
+
+    async function infoModal({title="Info", message="", okLabel="OK"}={}){
+      return new Promise((resolve)=>{
+        showModal({
+          title,
+          body: `<div class="muted" style="line-height:1.5">${escapeHtml(message).replace(/\n/g,"<br>")}</div>`,
+          footerButtons:[
+            {label: okLabel, cls:"btn primary", onClick: ()=>{ hideModal(); resolve(true); }}
+          ]
+        });
+      });
+    }
+
+
     $("#modalClose").addEventListener("click", hideModal);$("#modalClose").addEventListener("click", hideModal);
     $("#modalBackdrop").addEventListener("click", (e)=>{ if(e.target.id==="modalBackdrop") hideModal(); });
 
@@ -1143,6 +1227,8 @@ function updateFabs(){
       meals: [],
       mealPlan: { assignments: {} },
       mealsWeekKey: null,
+      mealsWeekMode: "next",
+      mealSwapFromDay: null,
       items: [],
       showPicked: false,
             shopShowPicked: (localStorage.getItem("bb.shopShowPicked")==="1"),
@@ -1654,6 +1740,44 @@ await loadActiveShopIfAny();
       $("#shopBasketTotal").textContent = money(total);
       $("#shopUnpriced").textContent = unpriced ? `${unpriced} picked item${unpriced===1?"":"s"} without a cost` : "";
 
+      // Budget (optional, stored on the list)
+      const budgetLine = $("#shopBudgetLine");
+      const budget = Number(cur?.budget || 0);
+      if(budgetLine && budget > 0){
+        budgetLine.style.display = "";
+        budgetLine.textContent = `Budget: £${budget.toFixed(0)} • ${total > budget ? "Over" : "Remaining"} £${Math.abs(budget-total).toFixed(2)}`;
+      }else if(budgetLine){
+        budgetLine.style.display = "none";
+        budgetLine.textContent = "";
+      }
+      const totalEl = $("#shopBasketTotal");
+      if(totalEl){
+        totalEl.classList.toggle("overBudget", budget>0 && total>budget);
+      }
+
+      // Voucher flag (persists on the list)
+      const chk = $("#chkVoucher");
+      if(chk){
+        chk.disabled = !cur;
+        chk.checked = !!cur?.voucherNext;
+        if(!chk.dataset.bound){
+          chk.dataset.bound = "1";
+          chk.addEventListener("change", async ()=>{
+            const cur2 = getCurrentList();
+            if(!cur2) return;
+            const v = !!chk.checked;
+            try{
+              await updateDoc(doc(db,"households", state.selectedHouseholdId, "lists", cur2.id), { voucherNext: v });
+              const idx = state.lists.findIndex(x=>x.id===cur2.id);
+              if(idx>=0) state.lists[idx] = {...state.lists[idx], voucherNext: v};
+            }catch(err){
+              console.error(err);
+              toast("Couldn’t save voucher flag (permissions)");
+            }
+          });
+        }
+      }
+
       if(shop && cur && shop.listId === cur.id){
         const elapsed = (Date.now() - (shop.startedAtMs||Date.now()))/1000;
         $("#shopTimer").textContent = fmtHMS(elapsed);
@@ -1962,6 +2086,7 @@ row.querySelector("[data-skip]")?.addEventListener("click", async (e)=>{
         const when = fmtDateTime(ms);
         const total = Number.isFinite(Number(s.basketTotal)) ? money(Number(s.basketTotal)) : "£—";
         const dur = s.durationHms || (Number.isFinite(Number(s.durationSeconds)) ? fmtHMS(Number(s.durationSeconds)) : "—");
+        const listName = (s.listNameAtShop || s.listName || "");
         const pickedCount = Array.isArray(s.itemsFinal) ? s.itemsFinal.filter(x=>x && x.picked).length : 0;
         const totalCount = Array.isArray(s.itemsFinal) ? s.itemsFinal.length : 0;
 
@@ -1971,7 +2096,7 @@ row.querySelector("[data-skip]")?.addEventListener("click", async (e)=>{
         row.innerHTML = `
           <div class="grow">
             <div class="title">${escapeHtml(when)}</div>
-            <div class="sub">${escapeHtml(total)} • ${escapeHtml(dur)} • ${pickedCount}/${totalCount} picked${s.unpricedCount?` • ${s.unpricedCount} unpriced`:``}</div>
+            <div class="sub">${listName ? (escapeHtml(listName) + " • ") : ""}${escapeHtml(total)} • ${escapeHtml(dur)} • ${pickedCount}/${totalCount} picked${s.unpricedCount?` • ${s.unpricedCount} unpriced`:``}</div>
           </div>
           <button class="btn ghost small" type="button" data-open>View</button>
           <button class="btn danger small" type="button" data-del>x</button>
@@ -2027,15 +2152,22 @@ row.querySelector("[data-skip]")?.addEventListener("click", async (e)=>{
       const when = fmtDateTime(ms);
       const total = Number.isFinite(Number(s.basketTotal)) ? money(Number(s.basketTotal)) : "£—";
       const dur = s.durationHms || (Number.isFinite(Number(s.durationSeconds)) ? fmtHMS(Number(s.durationSeconds)) : "—");
+      const budget = (()=>{
+        const b = Number.isFinite(Number(s.budgetAtShop)) ? Number(s.budgetAtShop) : null;
+        if(b!=null) return b;
+        // fallback for older shop records created before budget snapshot existed
+        const l = (state.lists||[]).find(x=>x && x.id===s.listId);
+        return Number.isFinite(Number(l?.budget)) ? Number(l.budget) : null;
+      })();
       const unp = s.unpricedCount ? `${s.unpricedCount} unpriced` : "All priced";
       const allItems = Array.isArray(s.itemsFinal) ? s.itemsFinal : [];
       const pickedItems = allItems.filter(x=>x && x.picked);
       const showing = state.shopDetailShowAll ? allItems : pickedItems;
 
       sum.innerHTML = `
-        <div class="card" style="padding:10px">
+        <div class="card${budget!=null && Number(s.basketTotal)>budget ? " overBudget" : ""}" style="padding:10px">
           <div class="h1" style="margin:0">${escapeHtml(when)}</div>
-          <div class="muted" style="margin-top:4px">${escapeHtml(total)} • ${escapeHtml(dur)} • ${pickedItems.length}/${allItems.length} picked • ${escapeHtml(unp)}</div>
+          <div class="muted" style="margin-top:4px">${escapeHtml(s.listNameAtShop || s.listName || "List")} • ${escapeHtml(total)} • ${escapeHtml(dur)} • ${pickedItems.length}/${allItems.length} picked • ${escapeHtml(unp)}${budget!=null ? ` • Budget ${money(budget)}${Number(s.basketTotal)>budget ? " (over)" : ""}` : ""}</div>
         </div>
       `;
 
@@ -2071,7 +2203,7 @@ row.querySelector("[data-skip]")?.addEventListener("click", async (e)=>{
         for(const it of groups.get(catId)){
           const row = document.createElement("div");
           row.className = "item" + (it.picked ? " picked" : "");
-          const qtyTxt = (it.qty!=null) ? `${it.qty}${it.unit?` ${it.unit}`:``}` : "";
+          const qtyTxt = (it.qty!=null) ? (String(it.qty) + (it.unit ? (" " + it.unit) : "")) : "";
           const costTxt = Number.isFinite(Number(it.pickedCost)) ? money(Number(it.pickedCost)) : "£—";
           const pickedQtyTxt = Number.isFinite(Number(it.pickedQty)) ? `Qty ${Number(it.pickedQty)}` : "";
           row.innerHTML = `
@@ -2302,6 +2434,8 @@ async function openShopPickModal(it, opts={}){
         durationSeconds: elapsedSec,
         durationHms: fmtHMS(elapsedSec),
         basketTotal: Number(total.toFixed(2)),
+        budgetAtShop: (Number.isFinite(Number(cur?.budget)) ? Number(cur.budget) : null),
+        listNameAtShop: (cur?.name || ""),
         unpricedCount: unpriced,
         itemsFinal: finalItems,
         updatedAt: serverTimestamp()
@@ -2311,6 +2445,15 @@ async function openShopPickModal(it, opts={}){
       state.activeShop = null;
       setActiveShopKey(null);
       toast("Shop completed");
+
+      // Voucher reminder (if flagged for next shop)
+      if(cur?.voucherNext){
+        await infoModal({
+          title:"Voucher reminder",
+          message:"You’ve marked that you have a voucher for your next shop. Don’t forget to use it if it’s still valid!"
+        });
+      }
+
       renderShop();
     }
     async function resetShopSession(){
@@ -2489,6 +2632,11 @@ function renderMealTags(it){
 
       if(togglePickedBtn){
         togglePickedBtn.textContent = state.showPicked ? "Hide picked" : "Show picked";
+      }
+      const budgetBtn = $("#btnSetBudget");
+      if(budgetBtn){
+        const b = Number(cur?.budget || 0);
+        budgetBtn.textContent = b > 0 ? `Budget: £${b.toFixed(0)}` : "Set budget";
       }
 
       const visible = (state.items || []).filter(it=> state.showPicked ? true : !it.picked);
@@ -2682,16 +2830,31 @@ function renderMealTags(it){
       for(const l of visible){
         const isCurrent = l.id === currentId;
         const el = document.createElement("div");
-        el.className = "item hhRow" + (isCurrent ? " selected" : "");
-        el.innerHTML = `
+        el.className = "item hhRow listCard" + (isCurrent ? " selected big" : "") + (isCurrent ? (l.type==="weekly" ? " bg-weekly" : " bg-custom") : "");
+
+        const buildIcon = `
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>`;
+        const shopIcon = `
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M6 7h15l-2 10H8L6 7Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M6 7 5 4H3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M9 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+            <path d="M18 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+          </svg>`;
+
+        const meta = `${l.type==="weekly" ? "Weekly" : "Custom"}${l.archived ? " • Archived" : ""}`;
+
+        el.innerHTML = isCurrent ? `
           <div class="grow">
             <div class="title">${escapeHtml(l.name || "List")}</div>
-            <div class="sub">${l.type==="weekly" ? "Weekly" : "Custom"}${l.archived ? " • Archived" : ""}</div>
+            <div class="sub">${meta}</div>
           </div>
-          
-          <div class="row" style="gap:8px; justify-content:flex-end; align-items:center">
-            <button class="btn secondary small" type="button" data-list-build>Build</button>
-            <button class="btn primary small" type="button" data-list-shop>Shop</button>
+
+          <div class="listActions">
+            <button class="iconBtn actionBtn" type="button" data-list-build aria-label="Build list" title="Build">${buildIcon}</button>
+            <button class="iconBtn actionBtn" type="button" data-list-shop aria-label="Shop list" title="Shop">${shopIcon}</button>
             <button class="iconBtn" type="button" data-list-manage aria-label="List options" title="List options">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
@@ -2701,7 +2864,26 @@ function renderMealTags(it){
             </button>
           </div>
 
-            <div class="badge">${l.type==="weekly" ? "Weekly" : "List"}</div>
+          <div class="badge">${l.type==="weekly" ? "Weekly" : "List"}</div>
+        ` : `
+          <div class="grow">
+            <div class="title">${escapeHtml(l.name || "List")}</div>
+            <div class="sub">${meta}</div>
+          </div>
+
+          <div class="row" style="gap:8px; justify-content:flex-end; align-items:center">
+            <button class="iconBtn actionBtn" type="button" data-list-build aria-label="Build list" title="Build">${buildIcon}</button>
+            <button class="iconBtn actionBtn" type="button" data-list-shop aria-label="Shop list" title="Shop">${shopIcon}</button>
+            <button class="iconBtn" type="button" data-list-manage aria-label="List options" title="List options">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+                <path d="M19 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+                <path d="M5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="badge">${l.type==="weekly" ? "Weekly" : "List"}</div>
         `;
         el.addEventListener("click", ()=>{
           setCurrentListId(l.id);
@@ -3191,6 +3373,45 @@ $("#btnTogglePicked")?.addEventListener("click", ()=>{
       renderBuild();
     });
 
+    $("#btnSetBudget")?.addEventListener("click", async ()=>{
+      const cur = getCurrentList();
+      if(!cur) return;
+      const existing = Number(cur.budget || 0);
+      const body = `
+        <div class="field">
+          <label>Budget (optional)</label>
+          <input id="budgetInput" type="number" inputmode="decimal" placeholder="e.g. 80" value="${existing>0 ? escapeAttr(String(existing)) : ""}">
+          <div class="muted" style="margin-top:6px">If set, the Shop tab will show whether you’re over budget.</div>
+        </div>
+      `;
+      showModal({
+        title:"Set budget",
+        body,
+        footerButtons:[
+          {label:"Cancel", cls:"btn ghost", onClick:()=>hideModal()},
+          {label:"Save", cls:"btn primary", onClick: async ()=>{
+            const v = parseFloat(($("#budgetInput")?.value||"").trim());
+            const budget = (isFinite(v) && v>0) ? Math.round(v*100)/100 : 0;
+            try{
+              await updateDoc(doc(db,"households", state.selectedHouseholdId, "lists", cur.id), { budget });
+              // optimistic local update
+              const idx = state.lists.findIndex(x=>x.id===cur.id);
+              if(idx>=0) state.lists[idx] = {...state.lists[idx], budget};
+              hideModal();
+              renderBuild();
+              renderShopHeaderOnly?.();
+              toast(budget>0 ? "Budget set" : "Budget cleared");
+            }catch(err){
+              console.error(err);
+              toast("Couldn’t save budget (permissions)");
+            }
+          }}
+        ]
+      });
+      // focus
+      setTimeout(()=>$("#budgetInput")?.focus(), 50);
+    });
+
 
     // Shop tab
     $("#btnStartShop")?.addEventListener("click", async ()=>{
@@ -3381,6 +3602,17 @@ function openListSettings(list){
       return isoWeekKey(d);
     }
 
+    function weekKeyThis(){
+      const now = new Date();
+      return isoWeekKey(now);
+    }
+
+    function getMealsWeekKey(){
+      return state.mealsWeekMode==="this" ? weekKeyThis() : weekKeyNow();
+    }
+
+
+
     function mealNorm(s){
       return String(s||"").trim().toLowerCase().replace(/\s+/g," ");
     }
@@ -3509,7 +3741,7 @@ function openListSettings(list){
         title: isNew ? "Add quick-check section" : "Edit quick-check section",
         body: `
           <div class="grid2">
-            <div class="field"><label>Icon</label><input id="psIcon" value="${escapeHtml(sec.icon||"")}" placeholder="e.g. 🧼" /></div>
+            <div class="field"><label>Icon</label><input id="psIcon" maxlength="1" value="${escapeHtml(sec.icon||"")}" placeholder="e.g. 🧼" /></div>
             <div class="field"><label>Title</label><input id="psTitle" value="${escapeHtml(sec.title||"")}" placeholder="e.g. Bathroom" /></div>
           </div>
           <div class="field"><label>Subtitle (optional)</label><input id="psSub" value="${escapeHtml(sec.subtitle||"")}" placeholder="e.g. Things you forget" /></div>
@@ -3528,7 +3760,7 @@ function openListSettings(list){
             label:"Save",
             className:"primary",
             onClick: async ()=>{
-              sec.icon = ($("#psIcon").value||"").trim() || "✨";
+              sec.icon = ((($("#psIcon").value||"").trim())[0] || "").trim() || "✨";
               sec.title = ($("#psTitle").value||"").trim() || "Section";
               sec.subtitle = ($("#psSub").value||"").trim();
               const rows = Array.from($$("#psItems .item"));
@@ -3834,7 +4066,7 @@ function openListSettings(list){
         renderMeals();
       });
 
-      const wk = weekKeyNow();
+      const wk = getMealsWeekKey();
       state.mealsWeekKey = wk;
       const planRef = doc(db, "households", state.selectedHouseholdId, "mealPlans", wk);
       state.unsubMealPlan = onSnapshot(planRef, (ds)=>{
@@ -3847,6 +4079,17 @@ function openListSettings(list){
         state.mealPlan = { assignments: {} };
         renderMeals();
       });
+
+      // Toggle between "Next week" (plan ahead) and "This week" (view-only + swap)
+      const wkPill = $("#mealsWeekKey");
+      if(wkPill && !wkPill.dataset.bound){
+        wkPill.dataset.bound = "1";
+        wkPill.addEventListener("click", ()=>{
+          state.mealsWeekMode = (state.mealsWeekMode==="next") ? "this" : "next";
+          state.mealSwapFromDay = null;
+          attachMealsListeners(); // re-subscribe to correct week doc
+        });
+      }
     }
 
     function fmtDayLabel(i){
@@ -3855,7 +4098,12 @@ function openListSettings(list){
     }
 
     function renderMeals(){
-      $("#mealsWeekKey").textContent = state.mealsWeekKey ? fmtWcDate(isoWeekMonday(state.mealsWeekKey)) : "—";
+      const wkEl = $("#mealsWeekKey");
+      if(wkEl){
+        wkEl.textContent = state.mealsWeekKey ? `${state.mealsWeekMode==="this" ? "This week • " : "Next week • "}${fmtWcDate(isoWeekMonday(state.mealsWeekKey))} (tap)` : "— (tap)";
+        wkEl.title = "Tap to switch between next-week planning and this-week view";
+        wkEl.classList.add("tappable");
+      }
 
       const emptyPlanner = $("#mealsPlannerEmpty");
       const wrapPlanner = $("#mealsPlannerWrap");
@@ -3883,6 +4131,7 @@ function openListSettings(list){
       const opts = [`<option value="">—</option>`, `<option value="__none__">Meal not needed</option>`].concat(meals.map(m=>`<option value="${escapeHtml(m.id)}">${escapeHtml(m.name||"Meal")}</option>`)).join("");
 
       const assign = state.mealPlan?.assignments || {};
+      const viewOnly = state.mealsWeekMode === "this";
       daysWrap.innerHTML = "";
       for(let i=0;i<7;i++){
         const key = String(i);
@@ -3903,10 +4152,42 @@ function openListSettings(list){
         if(clearBtn){ clearBtn.dataset.day = key; clearBtn.addEventListener("click", async (e)=>{ e.preventDefault(); e.stopPropagation(); await setMealForDay(key, ""); }); }
         const select = row.querySelector("select");
         select.value = sel;
-        select.addEventListener("change", async (e)=>{
-          const mealId = e.target.value || "";
-          await setMealForDay(key, mealId);
-        });
+if(viewOnly){
+  select.disabled = true;
+  select.style.pointerEvents = "none";
+  row.classList.add("tappable");
+  if(clearBtn){ clearBtn.disabled = true; clearBtn.style.visibility = "hidden"; }
+  row.classList.toggle("swapSel", state.mealSwapFromDay === key);
+  row.addEventListener("click", async ()=>{
+    const from = state.mealSwapFromDay;
+    if(!from){
+      state.mealSwapFromDay = key;
+      toast("Select another day to swap");
+      renderMeals();
+      return;
+    }
+    if(from === key){
+      state.mealSwapFromDay = null;
+      renderMeals();
+      return;
+    }
+    try{
+      await swapMealDaysInWeek(from, key);
+      state.mealSwapFromDay = null;
+      toast("Meals swapped");
+      renderMeals();
+    }catch(err){
+      console.error(err);
+      toast("Couldn’t swap meals");
+    }
+  });
+}else{
+  select.addEventListener("change", async (e)=>{
+    const mealId = e.target.value || "";
+    await setMealForDay(key, mealId);
+  });
+}
+
         daysWrap.appendChild(row);
 
       }
@@ -3937,14 +4218,14 @@ function openListSettings(list){
             </div>
             <div class="row mealActions">
               <button class="btn secondary small" type="button" data-add-week aria-label="Add to week"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h1V3a1 1 0 0 1 1-1Zm12 8H5v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9ZM6 6a1 1 0 0 0-1 1v1h14V7a1 1 0 0 0-1-1H6Z"/></svg></button>
-              <button class="btn primary small" type="button" data-add-shop>+ weekly shop</button>
+              <button class="btn primary small" type="button" data-add-shop>Add to list</button>
               <button class="iconBtn" type="button" data-edit aria-label="Edit">✎</button>
               <button class="btn danger small" type="button" data-del aria-label="Delete">×</button>
             </div>
           `;
 
           el.querySelector("[data-add-week]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openPickDayModal(meal.id); });
-          el.querySelector("[data-add-shop]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openIngredientPickModal({ source:"meal", mealIds:[meal.id] }); });
+          el.querySelector("[data-add-shop]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openIngredientPickModal({ source:"meal", mealIds:[meal.id], allowListSelect:true }); });
           el.querySelector("[data-edit]")?.addEventListener("click", (e)=>{ e.stopPropagation(); openMealEditor(meal); });
           el.querySelector("[data-del]")?.addEventListener("click", async (e)=>{
             e.stopPropagation();
@@ -4048,7 +4329,21 @@ function openPickDayModal(mealId){
       });
     }
 
-    function openMealEditor(meal=null){
+    
+
+    async function swapMealDaysInWeek(dayA, dayB){
+      const wk = state.mealsWeekKey;
+      if(!wk || !state.selectedHouseholdId) return;
+      const planRef = doc(db, "households", state.selectedHouseholdId, "mealPlans", wk);
+      const cur = state.mealPlan?.assignments || {};
+      const a = cur[dayA] || "__none__";
+      const b = cur[dayB] || "__none__";
+      const next = { ...cur, [dayA]: b, [dayB]: a };
+      await setDoc(planRef, { assignments: next, updatedAt: serverTimestamp() }, { merge:true });
+      state.mealPlan = { assignments: next };
+    }
+
+function openMealEditor(meal=null){
       const isEdit = !!meal;
       const name = (meal?.name || "").trim();
       const ingredients = Array.isArray(meal?.ingredients) ? meal.ingredients : [];
@@ -4258,7 +4553,7 @@ function openPickDayModal(mealId){
       return ref.id;
     }
 
-    async function openIngredientPickModal({source="meal", mealIds=[]}={}){
+    async function openIngredientPickModal({source="meal", mealIds=[], allowListSelect=false, targetListId=null}={}){
       if(!guardHousehold()) return;
 
       let ids = mealIds;
@@ -4293,13 +4588,29 @@ function openPickDayModal(mealId){
           </div>`;
       }).join("");
 
-      showModal({
-        title: "Add to Weekly Shop",
+      
+      // Target list selection (single-meal add can target any list; week add stays Weekly Shop)
+      const lists = (state.lists||[]).filter(l=>l && !l.archived);
+      let weeklyId = state.weeklyListId || lists.find(l=>l.isWeekly)?.id || null;
+      if(!weeklyId){
+        try{ weeklyId = await ensureWeeklyListId(); }catch(e){ weeklyId = null; }
+      }
+      let chosenListId = targetListId || (allowListSelect ? (state.selectedListId || weeklyId) : weeklyId);
+      if(source==="week") chosenListId = weeklyId;
+
+      const listOpts = lists.map(l=>`<option value="${escapeHtml(l.id)}">${escapeHtml(l.name||"List")}</option>`).join("");
+      const listSelectBlock = (allowListSelect && source!=="week" && lists.length>1) ? `
+        <div class="field" style="margin-top:10px">
+          <label>Add to list</label>
+          <select class="select" id="pickTargetList">${listOpts}</select>
+        </div>` : "";
+showModal({
+        title: "Add ingredients",
         body: `
-          <div class="muted">Tick what you need. Duplicates will merge.</div>
+          <div class="muted">Tick what you need. Duplicates will merge.</div>${listSelectBlock}
           <div class="sep"></div>
           <div class="row" style="gap:10px; justify-content:flex-end">
-            <button class="btn secondary small" id="pickAll" type="button">Add all</button>
+            <button class="btn secondary small" id="pickAll" type="button">Select all</button>
             <button class="btn ghost small" id="clearAll" type="button">Clear all</button>
           </div>
           <div class="sep"></div>
@@ -4317,11 +4628,18 @@ function openPickDayModal(mealId){
                 if(chk && chk.checked) selected.push(items[i]);
               });
               if(!selected.length){ toast("Nothing selected"); return false; }
-              await mergeIngredientsIntoWeekly(selected);
-              toast("Added ingredients to Weekly Shop");
+              const tgt = (allowListSelect && source!=="week")
+                ? (($("#pickTargetList")?.value) || chosenListId || state.selectedListId || weeklyId)
+                : weeklyId;
+              await mergeIngredientsIntoList(tgt, selected);
+              const tListName = (state.lists||[]).find(l=>l && l.id===tgt)?.name || (tgt===weeklyId ? "Weekly Shop" : "list");
+              toast(`Added ingredients to ${tListName}`);
             }}
         ]
       });
+
+      const selEl = $("#pickTargetList");
+      if(selEl && chosenListId){ selEl.value = chosenListId; }
 
       $("#pickAll")?.addEventListener("click", ()=>{
         $("#pickList").querySelectorAll("[data-pick-check]").forEach(c=>c.checked = true);
@@ -4331,11 +4649,11 @@ function openPickDayModal(mealId){
       });
     }
 
-    async function mergeIngredientsIntoWeekly(ings){
+    async function mergeIngredientsIntoList(listId, ings){
       if(!guardHousehold()) return;
       setSync("Sync • Adding…", "warn");
 
-      const listId = await ensureWeeklyListId();
+      if(!listId) throw new Error("No target list");
       const itemsCol = collection(db, "households", state.selectedHouseholdId, "lists", listId, "items");
 
       const snap = await getDocs(query(itemsCol));
@@ -4369,14 +4687,21 @@ function openPickDayModal(mealId){
           const mergedTags = Array.from(new Set(prevTags.concat(newTags))).filter(Boolean);
           if(mergedTags.length) updates.mealTags = mergedTags;
 
-          if(exQty!==null && ingQty!==null && exUnit && ingUnit && exUnit.toLowerCase()===ingUnit.toLowerCase()){
+          const exUnitL = (exUnit||"").trim().toLowerCase();
+          const ingUnitL = (ingUnit||"").trim().toLowerCase();
+          const unitsHardMismatch = (exUnitL && ingUnitL && exUnitL !== ingUnitL);
+
+          // Quantity: add together when units match OR either unit is blank (treat blank as compatible)
+          if(exQty!==null && ingQty!==null && !unitsHardMismatch){
             updates.qty = exQty + ingQty;
-          } else if(exQty===null && ingQty!==null && (!exUnit || exUnit.toLowerCase()===ingUnit.toLowerCase())){
+            if(ingUnit && !exUnit) updates.unit = ingUnit;
+          } else if(exQty===null && ingQty!==null){
             updates.qty = ingQty;
             if(ingUnit && !exUnit) updates.unit = ingUnit;
-          } else if(ingQty!==null || ingNotes){
+          } else if(ingNotes || (ingQty!==null && unitsHardMismatch)){
+            // Only append "Needed:" when we *can't* safely add quantities due to unit mismatch
             const needed = ingQty!==null ? `${ingQty}${ingUnit ? " "+ingUnit : ""}` : "";
-            const extra = needed ? `Needed: ${needed}` : "";
+            const extra = (ingQty!==null && unitsHardMismatch && needed) ? `Needed: ${needed}` : "";
             const toAppend = [extra, ingNotes].filter(Boolean).join(extra && ingNotes ? " — " : "");
             if(toAppend){
               const prev = (ex.notes || "").trim();
@@ -4467,6 +4792,13 @@ function isMondayMorning(d){
   const h = d.getHours();
   return dow === 1 && h >= 5 && h < 12;
 }
+
+    async function mergeIngredientsIntoWeekly(ings){
+      const listId = await ensureWeeklyListId();
+      return mergeIngredientsIntoList(listId, ings);
+    }
+
+
 
 async function scheduleWeeklyResetCheck(){
   // defer a little so listeners have populated state.lists/state.config
