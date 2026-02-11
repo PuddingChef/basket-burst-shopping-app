@@ -524,6 +524,8 @@
       border: 1px solid rgba(255,197,66,.35);
       font-size: 22px;
       flex:0 0 auto;
+      font-family: system-ui, "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji", sans-serif;
+      line-height: 1;
     }
     .promptMeta .ptitle{font-weight:900; letter-spacing:-0.2px}
     .promptMeta .psub{font-size:12.5px; color: var(--slate); margin-top:2px}
@@ -644,7 +646,7 @@
               <div class="row" style="justify-content:space-between; align-items:flex-start; gap:10px">
                 <div class="grow">
                   <div class="h1">Meal Planner</div>
-                  <div class="muted">Evening meals (Mon–Sun). Tap the date to toggle between this week and next week.</div>
+                  <div class="muted">Evening meals. Tap the date to toggle between this week and next week.</div>
                   <div style="margin-top:8px">
                     <div class="mealsHead badge" id="mealsWeekKey">—</div>
                   </div>
@@ -876,10 +878,70 @@
                   <div class="row wrap">
                     <button class="btn primary" id="btnAddTplItem" type="button">Add template item</button>
                     <button class="btn secondary" id="btnResetWeeklyNow" type="button">Reset weekly shop</button>
-                    <button class="btn ghost" id="btnTestWeeklyPrompt" type="button">Test Monday reset prompt</button>
+                    
                   </div>
                 </div>
               </details>
+              
+<details id="setupWeek" class="setupDetails">
+  <summary>
+    <div class="sumTitle">Week &amp; reminders</div>
+    <div class="sumSub">Choose your first day of the week and set a household reminder.</div>
+  </summary>
+  <div class="detailsBody">
+    <div class="muted" style="margin-bottom:10px">These settings apply to everyone in this household.</div>
+
+    <label class="muted" for="firstDayOfWeek">First day of the week</label>
+    <select id="firstDayOfWeek" class="input">
+      <option value="1">Monday</option>
+      <option value="2">Tuesday</option>
+      <option value="3">Wednesday</option>
+      <option value="4">Thursday</option>
+      <option value="5">Friday</option>
+      <option value="6">Saturday</option>
+      <option value="0">Sunday</option>
+    </select>
+
+    <div class="sep"></div>
+
+    <div class="row" style="align-items:flex-start">
+      <label class="row" style="gap:10px; align-items:flex-start; margin:0">
+        <input type="checkbox" id="weeklyReminderEnabled" class="pickCheck" />
+        <div class="grow">
+          <div class="title">Weekly reset reminder</div>
+          <div class="sub">Shows a prompt at the chosen time, even if you’ve already reset.</div>
+        </div>
+      </label>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="row wrap">
+      <div class="grow">
+        <label class="muted" for="weeklyReminderDay">Reminder day</label>
+        <select id="weeklyReminderDay" class="input">
+          <option value="1">Monday</option>
+          <option value="2">Tuesday</option>
+          <option value="3">Wednesday</option>
+          <option value="4">Thursday</option>
+          <option value="5">Friday</option>
+          <option value="6">Saturday</option>
+          <option value="0">Sunday</option>
+        </select>
+      </div>
+      <div class="grow">
+        <label class="muted" for="weeklyReminderTime">Reminder time</label>
+        <input id="weeklyReminderTime" type="time" class="input" />
+      </div>
+    </div>
+
+    <div class="sep"></div>
+    <div class="row wrap">
+      <button class="btn secondary" id="btnSaveWeekSettings" type="button">Save week settings</button>
+      <button class="btn ghost" id="btnTestWeeklyPrompt" type="button">Test reminder prompt</button>
+    </div>
+  </div>
+</details>
               <details id="setupPrompts" class="setupDetails">
                 <summary>
                   <div class="sumTitle">Quick checks prompts</div>
@@ -1221,6 +1283,7 @@ function updateFabs(){
       config: null,
       unsubCategories: null,
       unsubConfig: null,
+      weeklyReminderInterval: null,
       unsubItems: null,
       unsubMeals: null,
       unsubMealPlan: null,
@@ -1413,6 +1476,21 @@ const el = document.createElement("div");
       }[c]));
     }
 
+    function firstGrapheme(str){
+      const s = String(str ?? "").trim();
+      if(!s) return "";
+      try{
+        if(typeof Intl !== "undefined" && Intl.Segmenter){
+          const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+          for(const part of seg.segment(s)){
+            return part.segment;
+          }
+        }
+      }catch{}
+      // Fallback: first Unicode codepoint (handles surrogate pairs, not ZWJ sequences)
+      return Array.from(s)[0] || "";
+    }
+
     // Safe for inserting into HTML attribute values (e.g., value="...")
     function escapeAttr(s){
       return escapeHtml(String(s ?? ""));
@@ -1578,7 +1656,7 @@ state.unsubConfig = onSnapshot(doc(db, "households", hid, "settings", "config"),
 // Weekly reset check (Monday morning) after initial data is available
 await loadActiveShopIfAny();
   try{ renderShop(); }catch{}
-  scheduleWeeklyResetCheck();
+  scheduleWeeklyReminderCheck();
     }
 
     function cleanupHouseholdSubs(){
@@ -3025,6 +3103,58 @@ function renderSetup(){
     }
   }
 
+
+// Week & reminder settings (Household Setup)
+const firstSel = $("#firstDayOfWeek");
+const remEnabled = $("#weeklyReminderEnabled");
+const remDay = $("#weeklyReminderDay");
+const remTime = $("#weeklyReminderTime");
+const btnSaveWeek = $("#btnSaveWeekSettings");
+
+if(firstSel && state.config){
+  const fd = (state.config.firstDayOfWeek===0 || state.config.firstDayOfWeek) ? Number(state.config.firstDayOfWeek) : 1;
+  firstSel.value = String(fd);
+}
+if(remEnabled && state.config){
+  const r = state.config.weeklyReminder || {};
+  remEnabled.checked = !!r.enabled;
+  if(remDay){
+    const d = (r.dow===0 || r.dow) ? Number(r.dow) : 1;
+    remDay.value = String(d);
+  }
+  if(remTime){
+    remTime.value = (r.time || "09:00");
+  }
+}
+
+// Disable/enable reminder fields
+const remOn = !!remEnabled?.checked;
+if(remDay) remDay.disabled = !remOn;
+if(remTime) remTime.disabled = !remOn;
+
+if(remEnabled && !remEnabled.dataset.bound){
+  remEnabled.dataset.bound = "1";
+  remEnabled.addEventListener("change", ()=>{
+    const on = !!remEnabled.checked;
+    if(remDay) remDay.disabled = !on;
+    if(remTime) remTime.disabled = !on;
+  });
+}
+
+if(btnSaveWeek && !btnSaveWeek.dataset.bound){
+  btnSaveWeek.dataset.bound = "1";
+  btnSaveWeek.addEventListener("click", async ()=>{
+    const patch = getWeekSettingsFromUI();
+    await saveHouseholdWeekSettings(patch);
+    toast("Week settings saved");
+    // Recompute views and reschedule reminder logic
+    try{ attachMealsListeners(); }catch{}
+    try{ renderMeals(); }catch{}
+    try{ renderShop(); }catch{}
+    try{ scheduleWeeklyReminderCheck(); }catch{}
+  });
+}
+
 }
     async function openEditBuildItemModal(it){
       const cur = getCurrentList();
@@ -3211,6 +3341,32 @@ async function saveWeeklyTemplate(next){
   }, { merge:true });
   toast("Template saved");
 }
+async function saveHouseholdWeekSettings(patch){
+  if(!guardHousehold()) return;
+  setSync("Sync • Saving week settings…", "warn");
+  await setDoc(doc(db, "households", state.selectedHouseholdId, "settings", "config"), {
+    ...patch,
+    updatedAt: serverTimestamp(),
+    updatedByUid: state.user.uid
+  }, { merge:true });
+  setSync("Sync • Up to date", "good");
+}
+
+function getWeekSettingsFromUI(){
+  const first = Number(($("#firstDayOfWeek")?.value ?? "1"));
+  const enabled = !!$("#weeklyReminderEnabled")?.checked;
+  const dow = Number(($("#weeklyReminderDay")?.value ?? "1"));
+  const time = ($("#weeklyReminderTime")?.value || "").trim() || "09:00";
+  return {
+    firstDayOfWeek: (first===0 || first) ? first : 1,
+    weeklyReminder: {
+      enabled,
+      dow: (dow===0 || dow) ? dow : 1,
+      time
+    }
+  };
+}
+
 
 function openTemplateItemModal(item){
   const isEdit = !!item;
@@ -3294,7 +3450,7 @@ async function deleteTemplateItem(id){
       setSync("Sync • Creating Weekly shop…", "warn");
       const ref = await addDoc(collection(db, "households", hid, "lists"), {
         name: "Weekly shop",
-        weekKey: isoWeekKey(new Date()),
+        weekKey: householdWeekKey(new Date()),
         type: "weekly",
         pinned: true,
         archived: false,
@@ -3363,7 +3519,7 @@ $("#btnNewList").addEventListener("click", async ()=>{
       if(!cur || !isWeeklyShopList(cur)){ toast("Weekly Shop only"); return; }
       const ok = await confirmModal({title:"Reset Weekly Shop", message:"Reset Weekly Shop back to your template? This will clear current items and restore your template items.", confirmLabel:"Reset", cancelLabel:"Cancel", confirmClass:"warn"});
       if(!ok) return;
-      await resetWeeklyShopToTemplate(state.selectedHouseholdId, cur.id, weekKeyNow());
+      await resetWeeklyShopToTemplate(state.selectedHouseholdId, cur.id, householdWeekKey(new Date()));
       toast("Weekly Shop reset");
       try{ renderBuild(); }catch{}
       try{ renderShop(); }catch{}
@@ -3595,17 +3751,19 @@ function openListSettings(list){
     }
 
     function weekKeyNow(){
-      // We plan for the week ahead (next ISO week)
-      const now = new Date();
-      const d = new Date(now);
-      d.setDate(d.getDate() + 7);
-      return isoWeekKey(d);
-    }
+  // Next week (based on household "first day of week")
+  const now = new Date();
+  const firstDow = getFirstDayOfWeek();
+  if(firstDow === 1) return isoWeekKey(addDays(now, 7));
+  const start = householdWeekStart(now);
+  const nextStart = addDays(start, 7);
+  return localDateKey(nextStart);
+}
 
     function weekKeyThis(){
-      const now = new Date();
-      return isoWeekKey(now);
-    }
+  const now = new Date();
+  return householdWeekKey(now);
+}
 
     function getMealsWeekKey(){
       return state.mealsWeekMode==="this" ? weekKeyThis() : weekKeyNow();
@@ -3741,7 +3899,7 @@ function openListSettings(list){
         title: isNew ? "Add quick-check section" : "Edit quick-check section",
         body: `
           <div class="grid2">
-            <div class="field"><label>Icon</label><input id="psIcon" maxlength="1" value="${escapeHtml(sec.icon||"")}" placeholder="e.g. 🧼" /></div>
+            <div class="field"><label>Icon</label><input id="psIcon" value="${escapeHtml(sec.icon||"")}" placeholder="e.g. 🧼" /></div>
             <div class="field"><label>Title</label><input id="psTitle" value="${escapeHtml(sec.title||"")}" placeholder="e.g. Bathroom" /></div>
           </div>
           <div class="field"><label>Subtitle (optional)</label><input id="psSub" value="${escapeHtml(sec.subtitle||"")}" placeholder="e.g. Things you forget" /></div>
@@ -3760,7 +3918,7 @@ function openListSettings(list){
             label:"Save",
             className:"primary",
             onClick: async ()=>{
-              sec.icon = ((($("#psIcon").value||"").trim())[0] || "").trim() || "✨";
+              sec.icon = ($("#psIcon").value || "").trim() || "✨";
               sec.title = ($("#psTitle").value||"").trim() || "Section";
               sec.subtitle = ($("#psSub").value||"").trim();
               const rows = Array.from($$("#psItems .item"));
@@ -3783,6 +3941,12 @@ function openListSettings(list){
           }
         ]
       });
+      // Icon input: allow emojis (do not clamp length) and improve rendering consistency
+      const iconEl = $("#psIcon");
+      if(iconEl){
+        iconEl.addEventListener("blur", ()=>{ iconEl.value = String(iconEl.value ?? "").trim(); });
+        iconEl.style.fontFamily = 'system-ui, "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji", sans-serif';
+      }
 
       const itemsWrap = $("#psItems");
       function addRow(item){
@@ -4071,7 +4235,40 @@ function openListSettings(list){
       const planRef = doc(db, "households", state.selectedHouseholdId, "mealPlans", wk);
       state.unsubMealPlan = onSnapshot(planRef, (ds)=>{
         const data = ds.exists() ? ds.data() : {};
-        state.mealPlan = { assignments: data.assignments || {}, weekKey: wk };
+        const assignments = (data && data.assignments) ? data.assignments : {};
+        state.mealPlan = { assignments: assignments || {}, weekKey: wk };
+
+        // Backwards-compat migration: if household week start changes, old plans may be stored under ISO week keys.
+        // If this week doc is empty/missing, attempt a one-time copy from the legacy ISO key so meals are not "wiped".
+        try{
+          const hasAny = state.mealPlan && state.mealPlan.assignments && Object.keys(state.mealPlan.assignments).length>0;
+          const firstDow = getFirstDayOfWeek(); // 0=Sun..6=Sat
+          state._mealPlanMigrated = state._mealPlanMigrated || {};
+          if(!hasAny && firstDow !== 1 && !state._mealPlanMigrated[wk]){
+            state._mealPlanMigrated[wk] = 1;
+            const legacyKey = (state.mealsWeekMode==="this") ? isoWeekKey(new Date()) : isoWeekKey(addDays(new Date(), 7));
+            if(legacyKey && legacyKey !== wk){
+              getDoc(doc(db, "households", state.selectedHouseholdId, "mealPlans", legacyKey)).then(async (lds)=>{
+                if(!lds.exists()) return;
+                const ld = lds.data() || {};
+                const la = ld.assignments || {};
+                if(!la || !Object.keys(la).length) return;
+                // Only write if still empty (avoid overwriting if user added meals meanwhile)
+                const curSnap = await getDoc(planRef);
+                const curData = curSnap.exists() ? (curSnap.data()||{}) : {};
+                const curA = curData.assignments || {};
+                if(curA && Object.keys(curA).length) return;
+                await setDoc(planRef, {
+                  assignments: la,
+                  migratedFrom: legacyKey,
+                  updatedAt: serverTimestamp(),
+                  updatedByUid: state.user?.uid || null
+                }, { merge:true });
+              }).catch(()=>{});
+            }
+          }
+        }catch{}
+
         renderMeals();
       }, (err)=>{
         console.error(err);
@@ -4100,7 +4297,7 @@ function openListSettings(list){
     function renderMeals(){
       const wkEl = $("#mealsWeekKey");
       if(wkEl){
-        wkEl.textContent = state.mealsWeekKey ? `${state.mealsWeekMode==="this" ? "This week • " : "Next week • "}${fmtWcDate(isoWeekMonday(state.mealsWeekKey))} (tap)` : "— (tap)";
+        wkEl.textContent = state.mealsWeekKey ? `${state.mealsWeekMode==="this" ? "This week • " : "Next week • "}${fmtWeekLabelFromKey(state.mealsWeekKey)} (tap)` : "— (tap)";
         wkEl.title = "Tap to switch between next-week planning and this-week view";
         wkEl.classList.add("tappable");
       }
@@ -4133,14 +4330,18 @@ function openListSettings(list){
       const assign = state.mealPlan?.assignments || {};
       const viewOnly = state.mealsWeekMode === "this";
       daysWrap.innerHTML = "";
-      for(let i=0;i<7;i++){
-        const key = String(i);
-        const sel = assign[key] || "";
-        const row = document.createElement("div");
+      
+const firstDow = getFirstDayOfWeek(); // 0=Sun..6=Sat
+for(let slot=0; slot<7; slot++){
+  const jsDow = (firstDow + slot) % 7; // 0=Sun..6=Sat
+  const idx = (jsDow===0) ? 6 : (jsDow - 1); // stored as 0=Mon..6=Sun
+  const key = String(idx);
+  const sel = assign[key] || "";
+  const row = document.createElement("div");
         row.className = "dayRow";
         row.innerHTML = `
           <div class="dayLabel">
-            <div>${fmtDayLabel(i)}</div>
+            <div>${fmtDayLabel(idx)}</div>
             <div class="sub">Evening</div>
           </div>
           <div class="grow">
@@ -4741,7 +4942,63 @@ showModal({
     }
 
 
-// === ISO week helpers + Weekly reset flow ===
+
+// === Week helpers (household-first-day) + Weekly reminder flow ===
+
+function addDays(d, n){
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+function getFirstDayOfWeek(){
+  const v = state.config?.firstDayOfWeek;
+  const n = (v===0 || v===1 || v===2 || v===3 || v===4 || v===5 || v===6) ? Number(v) : 1; // default Monday
+  return n;
+}
+
+function weekStartDateFor(d, firstDow){
+  // Most recent date (including today) matching firstDow, at local midnight
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  while(x.getDay() !== firstDow){
+    x.setDate(x.getDate() - 1);
+  }
+  return x;
+}
+
+function householdWeekStart(d){
+  return weekStartDateFor(d, getFirstDayOfWeek());
+}
+
+function householdWeekKey(d){
+  // Back-compat: if week starts on Monday, keep legacy ISO week keys for stored meal plans / weekly state.
+  const firstDow = getFirstDayOfWeek();
+  if(firstDow === 1) return isoWeekKey(d);
+  return localDateKey(householdWeekStart(d));
+}
+
+function parseWeekStartFromKey(key){
+  // Supports legacy ISO week keys and new YYYY-MM-DD keys
+  const iso = String(key||"").match(/^(\d{4})-W(\d{2})$/);
+  if(iso) return isoWeekMonday(key);
+  const m = String(key||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return null;
+  return new Date(Number(m[1]), Number(m[2])-1, Number(m[3]));
+}
+
+function fmtWeekLabelFromKey(key){
+  const start = parseWeekStartFromKey(key);
+  if(!start) return "—";
+  const end = addDays(start, 6);
+  const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const sameYear = start.getFullYear() === end.getFullYear();
+  const s = `${days[start.getDay()]} ${String(start.getDate()).padStart(2,"0")} ${months[start.getMonth()]}${sameYear ? "" : " " + start.getFullYear()}`;
+  const e = `${days[end.getDay()]} ${String(end.getDate()).padStart(2,"0")} ${months[end.getMonth()]}${sameYear ? "" : " " + end.getFullYear()}`;
+  return `${s} – ${e}`;
+}
+
+// === Legacy ISO week helpers (for older saved data) ===
 function isoWeekKey(d){
   // Returns YYYY-Www (ISO week date)
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -4800,59 +5057,121 @@ function isMondayMorning(d){
 
 
 
-async function scheduleWeeklyResetCheck(){
+async function scheduleWeeklyReminderCheck(){
   // defer a little so listeners have populated state.lists/state.config
-  setTimeout(()=> weeklyResetCheck().catch(()=>{}), 400);
+  setTimeout(()=> weeklyReminderCheck().catch(()=>{}), 450);
+  // also keep a lightweight periodic check while the app is open
+  try{
+    if(state.weeklyReminderInterval){ clearInterval(state.weeklyReminderInterval); state.weeklyReminderInterval = null; }
+    state.weeklyReminderInterval = setInterval(()=> weeklyReminderCheck().catch(()=>{}), 60*1000);
+  }catch{}
 }
 
-async function weeklyResetCheck(opts={}){
-  if(!state.user || !state.selectedHouseholdId) return;
-  const now = new Date();
-  const force = !!opts.force;
-  if(!force && !isMondayMorning(now)) return;
+function parseTimeHHMM(s){
+  const m = String(s||"").match(/^(\d{1,2}):(\d{2})$/);
+  if(!m) return null;
+  const hh = Math.max(0, Math.min(23, Number(m[1])));
+  const mm = Math.max(0, Math.min(59, Number(m[2])));
+  return {hh, mm};
+}
 
-  const today = localDateKey(now);
-  if(!force && localStorage.getItem("bb.weeklyResetPromptDate") === today) return;
+function computeMostRecentOccurrence(now, dow, timeStr){
+  const t = parseTimeHHMM(timeStr);
+  if(!t) return null;
+
+  // Find the most recent date (including today) with the given dow (0=Sun..6=Sat)
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), t.hh, t.mm, 0, 0);
+  while(d.getDay() !== dow){
+    d.setDate(d.getDate() - 1);
+  }
+  // If the scheduled time today is still in the future, step back a week
+  if(d.getTime() > now.getTime()){
+    d.setDate(d.getDate() - 7);
+  }
+  return d;
+}
+
+function occurrenceKey(dt){
+  if(!dt) return null;
+  const dk = localDateKey(dt);
+  const hh = String(dt.getHours()).padStart(2,"0");
+  const mm = String(dt.getMinutes()).padStart(2,"0");
+  return `${dk}T${hh}:${mm}`;
+}
+
+async function weeklyReminderCheck(opts={}){
+  if(!state.user || !state.selectedHouseholdId) return;
+
+  const cfg = state.config || {};
+  const reminder = cfg.weeklyReminder || {};
+  const force = !!opts.force;
+
+  const enabled = !!reminder.enabled;
+  const dow = (reminder.dow===0 || reminder.dow) ? Number(reminder.dow) : 1; // default Monday
+  const timeStr = reminder.time || "09:00";
+
+  if(!force && !enabled) return;
+
+  const now = new Date();
+  const occ = computeMostRecentOccurrence(now, dow, timeStr);
+  if(!occ) return;
+
+  // Due if we've passed the scheduled time for the most recent occurrence
+  if(!force && now.getTime() < occ.getTime()) return;
+
+  const occKey = occurrenceKey(occ);
+  if(!occKey) return;
+
+  // Household-level de-dupe: store on config doc, plus local fallback
+  const last = String(cfg.weeklyReminderLastKey || "");
+  const localLast = String(localStorage.getItem("bb.weeklyReminderLastKey") || "");
+  if(!force && (last === occKey || localLast === occKey)) return;
 
   const weekly = (state.lists || []).find(l=>l.type==="weekly" && !l.archived) || null;
   if(!weekly) return;
 
-  const currentKey = isoWeekKey(now);
+  const currentKey = householdWeekKey(now);
   const storedKey = weekly.weekKey || null;
 
-  // First time we see it, just initialise weekKey (no prompt)
-  if(!storedKey && !force){
-    await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", weekly.id), {
-      weekKey: currentKey,
-      updatedAt: serverTimestamp(),
-      updatedByUid: state.user.uid
-    });
-    return;
-  }
-  if(!force && storedKey === currentKey) return;
-
-  if(!force) localStorage.setItem("bb.weeklyResetPromptDate", today);
+  const allowCarryForward = !!storedKey && storedKey !== currentKey;
 
   const okReset = await confirmModal({
-    title: "New week, new shop?",
-    message: "It’s a new week. Do you want to reset Weekly Shop back to your template, or carry the current list forward?",
+    title: "Weekly reset reminder",
+    message: allowCarryForward
+      ? "It’s your scheduled reminder. It looks like Weekly Shop is still on last week. Do you want to reset back to your template, or carry your current list forward?"
+      : "It’s your scheduled reminder. Do you want to reset Weekly Shop back to your template?",
     confirmLabel: "Reset to template",
     confirmClass: "warn",
-    cancelLabel: "Carry forward"
+    cancelLabel: allowCarryForward ? "Carry forward" : "Not now"
   });
+
+  // Mark this occurrence handled for the household (and locally as a safety net)
+  try{ localStorage.setItem("bb.weeklyReminderLastKey", occKey); }catch{}
+  try{
+    await setDoc(doc(db, "households", state.selectedHouseholdId, "settings", "config"), {
+      weeklyReminderLastKey: occKey,
+      updatedAt: serverTimestamp(),
+      updatedByUid: state.user.uid
+    }, { merge:true });
+  }catch(err){
+    console.error(err);
+  }
 
   if(okReset){
     await resetWeeklyShopToTemplate(state.selectedHouseholdId, weekly.id, currentKey);
     toast("Weekly Shop reset");
-  }else{
+  }else if(allowCarryForward){
     await updateDoc(doc(db, "households", state.selectedHouseholdId, "lists", weekly.id), {
       weekKey: currentKey,
       updatedAt: serverTimestamp(),
       updatedByUid: state.user.uid
     });
     toast("Carried forward");
+  }else{
+    toast("Reminder dismissed", {ms:1600});
   }
 }
+
 
 async function resetWeeklyShopToTemplate(hid, weeklyListId, weekKey){
   if(!state.user) return;
@@ -5345,14 +5664,14 @@ $("#btnResetWeeklyNow")?.addEventListener("click", async ()=>{
     confirmClass:"warn"
   });
   if(!ok) return;
-  await resetWeeklyShopToTemplate(state.selectedHouseholdId, weekly.id, isoWeekKey(new Date()));
+  await resetWeeklyShopToTemplate(state.selectedHouseholdId, weekly.id, householdWeekKey(new Date()));
   toast("Weekly Shop reset");
 });
 
 $("#btnTestWeeklyPrompt")?.addEventListener("click", async ()=>{
   if(!guardHousehold()) return;
-  // Force-show the reset prompt regardless of day/week
-  await weeklyResetCheck({force:true});
+  // Force-show the reminder prompt regardless of schedule
+  await weeklyReminderCheck({force:true});
 });
 
 
